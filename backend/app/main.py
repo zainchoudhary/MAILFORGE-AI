@@ -26,7 +26,7 @@ async def lifespan(app):
 
 
 app = FastAPI(
-    title="MAILFORGE AI",
+    title="Outreach Studio",
     version="1.0.0",
     lifespan=lifespan,
     description="Traceable email operations with explicit approval and safe delivery semantics.",

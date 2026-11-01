@@ -109,10 +109,10 @@ export function ConfirmDialog({ open, onOpenChange, title = 'Confirm deletion', 
     </Dialog>
   );
 }
-export function Field({ label, error, children }) {
+export function Field({ label, error, required = false, children }) {
   return (
     <label className="field">
-      <span>{label}</span>
+      <span>{label}{required && <em className="required-mark" aria-hidden="true"> *</em>}</span>
       {children}
       {error && <small className="text-red-400">{error.message || error}</small>}
     </label>

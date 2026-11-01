@@ -8,6 +8,7 @@ import { api } from '../services/api';
 import { useAction } from '../hooks/useApi';
 import { useAuth } from '../context/AuthContext';
 import { Field, BusyButton } from '../components/Common';
+import { Brand } from '../components/Brand';
 export default function Login() {
   const [register, setRegister] = useState(false);
   const auth = useAuth();
@@ -28,17 +29,12 @@ export default function Login() {
   const action = useAction(async (values) => {
     const { data } = await api.post(`/auth/${register ? 'register' : 'login'}`, values);
     auth.login(data);
-  }, 'Welcome to Mailforge');
+  }, 'Welcome to Outreach Studio');
   if (auth.authenticated) return <Navigate to="/" replace />;
   return (
     <div className="auth-page">
       <section className="auth-story">
-        <div className="brand">
-          <div className="brand-symbol">
-            <Mail />
-          </div>
-          MAILFORGE <span className="brand-ai">AI</span>
-        </div>
+        <Brand />
         <div>
           <div className="eyebrow">
             <Sparkles size={14} /> INTELLIGENT EMAIL OPERATIONS
@@ -108,7 +104,7 @@ export default function Login() {
               form.reset();
             }}
           >
-            {register ? 'Already have an account? Sign in' : 'New to Mailforge? Create a workspace'}
+            {register ? 'Already have an account? Sign in' : 'New to Outreach Studio? Create a workspace'}
           </button>
         </div>
       </section>

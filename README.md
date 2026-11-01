@@ -1,4 +1,4 @@
-# MAILFORGE AI
+# Outreach Studio
 
 A full-stack email operations application built with **Python 3.12 / FastAPI** and **React / JavaScript / Vite**. Documents become reviewable recipient records; campaigns become personalized, auditable messages. PostgreSQL is the system of record. Redis and Celery perform background extraction and delivery. LangGraph coordinates document, composition, planning, delivery-inspection, and analytics agents.
 
@@ -81,7 +81,7 @@ Without an API key, AI generation returns an explicit configuration error and re
 
 `queued → sending → smtp_accepted` means the sending server accepted the primary recipient. It does **not** prove inbox delivery. `delivered`, `bounced`, `opened`, and `clicked` require a signed event from a verified provider adapter. Plain Gmail SMTP alone cannot supply those confirmations.
 
-`uncertain` is deliberate: an SMTP disconnect or worker crash may occur after the server accepted message DATA. Mailforge does not automatically resend such messages. Review the provider's records before preparing a separate retry campaign. Exactly-once delivery across an SMTP/network boundary cannot be guaranteed; unique message keys and row locks prevent ordinary duplicate queue delivery.
+`uncertain` is deliberate: an SMTP disconnect or worker crash may occur after the server accepted message DATA. Outreach Studio does not automatically resend such messages. Review the provider's records before preparing a separate retry campaign. Exactly-once delivery across an SMTP/network boundary cannot be guaranteed; unique message keys and row locks prevent ordinary duplicate queue delivery.
 
 Pause/cancel stops queued work. An SMTP transaction already in progress may complete. Retries use exponential backoff only for explicit temporary SMTP rejections. Suppression and consent are checked again immediately before delivery.
 

@@ -10,6 +10,9 @@ export async function importReviewedRecipients(rows) {
   if (selected.some((row) => !row.email?.trim())) {
     throw new Error('Each selected recipient needs an email address.');
   }
+  if (selected.some((row) => !row.name?.trim())) {
+    throw new Error('Each selected recipient needs a name. Add missing names before importing.');
+  }
   if (selected.length > 1000) throw new Error('Select up to 1,000 contacts per import.');
   const recipients = selected.map(({ selected: checked, ...payload }) => payload);
   const { data } = await api.post('/recipients/import', { recipients });

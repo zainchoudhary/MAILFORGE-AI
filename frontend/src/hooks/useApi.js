@@ -11,26 +11,29 @@ export function useAction(fn, message = 'Saved successfully', options = {}) {
     mutationFn: fn,
     ...options,
     onSuccess: async (data, variables, context) => {
+      await options.onConfirmed?.(data, variables, context, client);
       // Let active screens receive the committed server state before showing
       // completion feedback. This prevents a toast from appearing early while
       // the UI still shows the old status.
-      if (options.invalidatePrefixes?.length) {
-        await client.invalidateQueries({
+      const invalidate = async () => {
+        if (options.invalidatePrefixes?.length) {
+          return client.invalidateQueries({
           predicate: (query) =>
             options.invalidatePrefixes.some(
               (prefix) => typeof query.queryKey[0] === 'string' && query.queryKey[0].startsWith(prefix),
             ),
           refetchType: 'active',
-        });
-      } else if (options.invalidateKeys?.length) {
-        await Promise.all(
+          });
+        }
+        if (options.invalidateKeys?.length) return Promise.all(
           options.invalidateKeys.map((queryKey) =>
             client.invalidateQueries({ queryKey: [queryKey], refetchType: 'active' }),
           ),
         );
-      } else {
-        await client.invalidateQueries({ refetchType: 'active' });
-      }
+        return client.invalidateQueries({ refetchType: 'active' });
+      };
+      if (options.awaitRefetch === false) void invalidate();
+      else await invalidate();
       // Let React paint the refreshed state before showing completion feedback.
       // This keeps the toast from appearing ahead of the updated table.
       await new Promise((resolve) => requestAnimationFrame(resolve));

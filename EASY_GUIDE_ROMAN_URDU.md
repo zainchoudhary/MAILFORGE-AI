@@ -1,4 +1,4 @@
-# MAILFORGE AI — Aasaan Guide
+# Outreach Studio — Aasaan Guide
 
 Ye website emails ko **organize**, **likhne**, **bhejne se pehle check karne**, aur unka result dekhne ke liye bani hai.
 

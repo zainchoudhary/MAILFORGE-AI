@@ -32,6 +32,7 @@ import { useApi } from '../hooks/useApi';
 import { api, session } from '../services/api';
 import { useIsFetching, useQueryClient } from '@tanstack/react-query';
 import { ConfirmDialog } from '../components/Common';
+import { Brand, OutreachMark } from '../components/Brand';
 const groups = [
   [
     'WORKSPACE',
@@ -134,15 +135,7 @@ export default function Workspace() {
       {open && <div className="sidebar-backdrop" onClick={() => setOpen(false)} />}
       <aside className={`sidebar ${open ? 'open' : ''}`}>
         <div className="sidebar-heading-row">
-        <NavLink to="/" className="brand">
-          <div className="brand-symbol">
-            <Mail size={22} />
-            <span />
-          </div>
-          <span>
-            MAILFORGE<span className="brand-ai">AI</span>
-          </span>
-        </NavLink>
+        <NavLink to="/" aria-label="Outreach Studio home"><Brand /></NavLink>
         <button
           type="button"
           className="sidebar-collapse-toggle"
@@ -157,7 +150,7 @@ export default function Workspace() {
         >
           {collapsed ? (
             <span className="sidebar-collapsed-toggle-icons" aria-hidden="true">
-              <span className="sidebar-app-mark"><Mail size={21} /></span>
+              <span className="sidebar-app-mark" aria-label="Outreach Studio"><OutreachMark className="sidebar-collapsed-logo" /></span>
               <PanelLeftOpen className="sidebar-expand-mark" size={20} />
             </span>
           ) : <PanelLeftClose size={16} />}
@@ -218,7 +211,7 @@ export default function Workspace() {
       <ConfirmDialog
         open={logoutOpen}
         onOpenChange={setLogoutOpen}
-        title="Sign out of Mailforge"
+        title="Sign out of Outreach Studio"
         confirmLabel="Sign out"
         message="Are you sure you want to sign out of this workspace?"
         onConfirm={async () => {
@@ -265,7 +258,7 @@ export default function Workspace() {
         </motion.main>
         </div>
         <footer>
-          MAILFORGE AI <span>Intelligent email. Accountable delivery.</span>
+          Outreach Studio <span>Intelligent outreach. Accountable delivery.</span>
           <span>v1.0</span>
         </footer>
       </div>

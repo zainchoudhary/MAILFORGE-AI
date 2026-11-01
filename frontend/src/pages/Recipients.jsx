@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { FileScan, Plus, Pencil, Trash2, Loader2 } from 'lucide-react';
+import { FileScan, Plus, Pencil, Trash2, Loader2, Users, Upload, Mail, Building2, ListChecks } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApi, useAction } from '../hooks/useApi';
 import { api } from '../services/api';
@@ -23,7 +23,7 @@ import { toast } from 'sonner';
 import { reviewRows, importReviewedRecipients, importSummary } from '../services/recipientImport';
 const schema = z.object({
   email: z.string().email(),
-  name: z.string(),
+  name: z.string().trim().min(1, 'Name is required'),
   company: z.string(),
   position: z.string(),
 });
@@ -67,13 +67,30 @@ export default function Recipients() {
     if (editing) await api.put(`/recipients/${editing.id}`, payload);
     else await api.post('/recipients', payload);
   }, 'Recipient saved', { onSuccess: () => setOpen(false) });
+  const removeFromCache = (ids) => (data) => {
+    if (!data?.items) return data;
+    const items = data.items.filter((recipient) => !ids.includes(recipient.id));
+    return { ...data, items, total: Math.max(0, data.total - (data.items.length - items.length)) };
+  };
   const remove = useAction((id) => api.delete(`/recipients/${id}`), 'Recipient removed', {
     invalidatePrefixes: ['/recipients'],
+    awaitRefetch: false,
+    onConfirmed: (_, id, __, client) => client.setQueriesData(
+      { predicate: (item) => typeof item.queryKey[0] === 'string' && item.queryKey[0].startsWith('/recipients') },
+      removeFromCache([id]),
+    ),
   });
   const bulkRemove = useAction(
     (ids) => api.post('/recipients/bulk-delete', { recipient_ids: ids }),
     'Recipients removed',
-    { invalidatePrefixes: ['/recipients'] },
+    {
+      invalidatePrefixes: ['/recipients'],
+      awaitRefetch: false,
+      onConfirmed: (_, ids, __, client) => client.setQueriesData(
+        { predicate: (item) => typeof item.queryKey[0] === 'string' && item.queryKey[0].startsWith('/recipients') },
+        removeFromCache(ids),
+      ),
+    },
   );
   const extractDocument = useAction(async (document) => {
     setImportDocument(document);
@@ -102,6 +119,8 @@ export default function Recipients() {
   const extractedRows = reviewRows(importRows, extraction.data);
   const updateImportRow = (index, key, value) =>
     setImportRows(extractedRows.map((row, rowIndex) => (rowIndex === index ? { ...row, [key]: value } : row)));
+  const contactsOnPage = query.data?.items || [];
+  const companyCount = new Set(contactsOnPage.map((recipient) => recipient.company).filter(Boolean)).size;
   return (
     <>
       <PageHeader
@@ -124,8 +143,29 @@ export default function Recipients() {
           Import from document
         </Button>
       </PageHeader>
-      <section className="panel">
-        <div className="filter-bar">
+      <section className="audience-overview" aria-label="Audience summary">
+        <div className="audience-overview-main">
+          <span className="audience-overview-icon"><Users size={21} /></span>
+          <div>
+            <span className="audience-overview-label">CONTACT LIBRARY</span>
+            <strong>{query.data?.total ?? '—'} people in your audience</strong>
+            <p>Every contact stays private to this account and is ready to use across campaigns.</p>
+          </div>
+        </div>
+        <div className="audience-metrics">
+          <div><Mail size={15} /><span>Emails</span><strong>{contactsOnPage.length}</strong></div>
+          <div><Building2 size={15} /><span>Companies</span><strong>{companyCount}</strong></div>
+        </div>
+      </section>
+      <section className="panel recipients-library">
+        <div className="recipients-library-heading">
+          <div>
+            <h2>Audience contacts</h2>
+            <p>Search, update, or import the people you want to reach.</p>
+          </div>
+          {selectionMode && <span className="selection-indicator"><ListChecks size={15} /> {selectedIds.length} selected</span>}
+        </div>
+        <div className="filter-bar recipients-toolbar">
           <input
             type="search"
             aria-label="Search recipients"
@@ -145,7 +185,7 @@ export default function Recipients() {
               if (selectionMode) setSelectedIds([]);
             }}
           >
-            {selectionMode ? 'Cancel' : 'Select multiple'}
+            {selectionMode ? 'Done selecting' : 'Select multiple'}
           </Button>}
           {query.data?.total > 0 && selectionMode && (
             <Button
@@ -182,8 +222,8 @@ export default function Recipients() {
           {(d) => (
             <>
               {d.items.length ? (
-                <div className="table-scroll">
-                  <table>
+                <div className="table-scroll recipients-table-wrap">
+                  <table className="recipients-table">
                     <thead>
                       <tr>
                         {selectionMode && <th aria-label="Selection" />}
@@ -206,12 +246,19 @@ export default function Recipients() {
                             />
                           </td>}
                           <td>
-                            <strong>{r.name || r.email}</strong>
-                            <small>{r.email}</small>
+                            <div className="recipient-identity">
+                              <span className="recipient-avatar">{(r.name || r.email).trim().slice(0, 1).toUpperCase()}</span>
+                              <div>
+                                <strong>{r.name || 'Unnamed contact'}</strong>
+                                <small><Mail size={12} />{r.email}</small>
+                              </div>
+                            </div>
                           </td>
                           <td>
-                            {r.company || '—'}
-                            <small>{r.position}</small>
+                            <div className="recipient-work">
+                              <strong>{r.company || 'Independent'}</strong>
+                              <small>{r.position || 'No role added yet'}</small>
+                            </div>
                           </td>
                           <td>
                             <div className="flex gap-2">
@@ -219,6 +266,7 @@ export default function Recipients() {
                                 variant="ghost"
                                 size="icon"
                                 aria-label={`Edit ${r.email}`}
+                                title="Edit contact"
                                 onClick={() => {
                                   setEditing(r);
                                   form.reset({
@@ -236,6 +284,7 @@ export default function Recipients() {
                                 variant="ghost"
                                 size="icon"
                                 aria-label={`Remove ${r.email}`}
+                                title="Delete contact"
                                 onClick={() => {
                                   setDeleteTarget(r);
                                 }}
@@ -250,10 +299,15 @@ export default function Recipients() {
                   </table>
                 </div>
               ) : (
-                <Empty
-                  title="Build your recipient library"
-                  description="Add contacts manually or extract candidates from documents."
-                />
+                <div className="recipients-empty">
+                  <span><Users size={29} /></span>
+                  <h3>Start with your first contact</h3>
+                  <p>Add one person yourself or upload a document and review the contacts it finds.</p>
+                  <div>
+                    <Button onClick={() => { setEditing(null); form.reset({ email: '', name: '', company: '', position: '' }); setOpen(true); }}><Plus size={15} /> Add recipient</Button>
+                    <Button variant="secondary" onClick={() => setImportOpen(true)}><Upload size={15} /> Import contacts</Button>
+                  </div>
+                </div>
               )}
               <Pagination data={d} page={page} setPage={setPage} />
             </>
@@ -262,7 +316,7 @@ export default function Recipients() {
       </section>
       <Dialog open={importOpen} onOpenChange={setImportOpen} busy={uploadBusy || extractDocument.isPending || importRecipients.isPending} title="Import recipients from a document">
         <p className="my-4">
-          Upload a contact list, spreadsheet, PDF, Word file, image, or text document. MailForge
+          Upload a contact list, spreadsheet, PDF, Word file, image, or text document. Outreach Studio
           will find emails and available details, then let you review everything before saving.
         </p>
         {!importDocument && (
@@ -315,7 +369,7 @@ export default function Recipients() {
             {extractedRows.length ? (
               <div className="table-scroll">
                 <div className="flex justify-between items-center mb-3">
-                  <small>{extractedRows.filter((row) => row.selected !== false).length} of {extractedRows.length} selected</small>
+                  <small>Name and email are required · {extractedRows.filter((row) => row.selected !== false).length} of {extractedRows.length} selected</small>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -328,13 +382,13 @@ export default function Recipients() {
                   </Button>
                 </div>
                 <table>
-                  <thead><tr><th>Select</th><th>Email</th><th>Name</th><th>Company</th><th>Position</th></tr></thead>
+                  <thead><tr><th>Select</th><th>Email <span className="required-mark" aria-label="required">*</span></th><th>Name <span className="required-mark" aria-label="required">*</span></th><th>Company</th><th>Position</th></tr></thead>
                   <tbody>
                     {extractedRows.map((row, index) => (
                       <tr key={`${row.email}-${index}`}>
                         <td><input type="checkbox" checked={row.selected !== false} onChange={(e) => updateImportRow(index, 'selected', e.target.checked)} /></td>
                         {['email', 'name', 'company', 'position'].map((key) => (
-                          <td key={key}><input aria-label={`${key} ${index + 1}`} value={row[key] || ''} onChange={(e) => updateImportRow(index, key, e.target.value)} /></td>
+                          <td key={key}><input aria-label={`${key} ${index + 1}${['email', 'name'].includes(key) ? ', required' : ''}`} aria-required={['email', 'name'].includes(key)} value={row[key] || ''} onChange={(e) => updateImportRow(index, key, e.target.value)} /></td>
                         ))}
                       </tr>
                     ))}
@@ -369,10 +423,11 @@ export default function Recipients() {
           {['email', 'name', 'company', 'position'].map((key) => (
             <Field
               key={key}
-              label={key[0].toUpperCase() + key.slice(1)}
+              label={key === 'name' ? 'Full name' : key[0].toUpperCase() + key.slice(1)}
+              required={key === 'email' || key === 'name'}
               error={form.formState.errors[key]}
             >
-              <input {...form.register(key)} disabled={key === 'email' && !!editing} />
+              <input {...form.register(key)} required={key === 'email' || key === 'name'} disabled={key === 'email' && !!editing} />
             </Field>
           ))}
           <BusyButton busy={save.isPending} type="submit">

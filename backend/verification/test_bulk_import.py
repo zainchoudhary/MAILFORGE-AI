@@ -12,7 +12,9 @@ class BulkImportTests(unittest.TestCase):
     setUp = test_private_accounts.PrivateAccountTests.setUp
     tearDown = test_private_accounts.PrivateAccountTests.tearDown
     def batch(self, addresses):
-        return BulkRecipientImport(recipients=[{'email': address} for address in addresses]).recipients
+        return BulkRecipientImport(
+            recipients=[{'email': address, 'name': f'Contact {index + 1}'} for index, address in enumerate(addresses)]
+        ).recipients
 
     def test_77_import_and_retry(self):
         records = self.batch([f'contact{i}@example.com' for i in range(77)])
@@ -31,6 +33,11 @@ class BulkImportTests(unittest.TestCase):
     def test_invalid_batch_rejected_before_writes(self):
         with self.assertRaises(ValidationError):
             self.batch(['valid@example.com', 'invalid'])
+        self.assertEqual(self.db.scalar(select(func.count()).select_from(Recipient)), 0)
+
+    def test_name_is_required_before_batch_write(self):
+        with self.assertRaises(ValidationError):
+            BulkRecipientImport(recipients=[{'email': 'valid@example.com', 'name': '   '}])
         self.assertEqual(self.db.scalar(select(func.count()).select_from(Recipient)), 0)
 
     def test_audit_failure_rolls_back_whole_batch(self):

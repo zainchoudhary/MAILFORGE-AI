@@ -122,7 +122,7 @@ def test_role_guards_and_smtp_secret_redaction(client, account, db, monkeypatch)
     db.commit()
     assert (
         client.post(
-            "/api/v1/recipients", headers=account, json={"email": "denied@example.com"}
+            "/api/v1/recipients", headers=account, json={"email": "denied@example.com", "name": "Denied"}
         ).status_code
         == 403
     )

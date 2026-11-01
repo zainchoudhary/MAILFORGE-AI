@@ -26,7 +26,7 @@ class Refresh(Input):
 
 class RecipientInput(Input):
     email: EmailStr
-    name: str = Field(default="", max_length=200)
+    name: str = Field(min_length=1, max_length=200)
     company: str = Field(default="", max_length=200)
     position: str = Field(default="", max_length=200)
     custom_fields: dict[str, str] = Field(default_factory=dict)
@@ -35,6 +35,14 @@ class RecipientInput(Input):
     @classmethod
     def normalize(cls, value):
         return value.lower()
+
+    @field_validator("name")
+    @classmethod
+    def required_name(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Name is required")
+        return value
 
 
 class BulkRecipientDelete(Input):

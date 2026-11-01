@@ -348,7 +348,7 @@ export function Integrations() {
               <h3>Provider confirmations</h3>
               <p>
                 Connect your provider through an adapter that verifies its webhook and signs
-                Mailforge events. Delivery, bounce, open, and click events are never inferred from
+                Outreach Studio events. Delivery, bounce, open, and click events are never inferred from
                 SMTP acceptance.
               </p>
               <a className="text-link" href="/docs" target="_blank" rel="noreferrer">

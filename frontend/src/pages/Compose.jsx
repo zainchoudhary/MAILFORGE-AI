@@ -21,6 +21,21 @@ const parseEmails = (s) =>
     .split(/[,;\s]+/)
     .map((x) => x.trim())
     .filter(Boolean);
+const parseManualRecipients = (value) =>
+  value
+    .split(/[,;\n]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const match = entry.match(/^(.+?)\s*<([^<>\s]+@[^<>\s]+)>$/);
+      if (!match || !match[1].trim()) {
+        throw new Error('Enter each new recipient as Full name <email address>.');
+      }
+      return {
+        name: match[1].trim(),
+        email: z.string().email().parse(match[2]).toLowerCase(),
+      };
+    });
 export default function Compose() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -96,14 +111,13 @@ export default function Compose() {
   }, 'AI draft is ready for your review');
   const save = useAction(async (data) => {
     const ids = [...recipientIds];
-    for (const email of parseEmails(manual)) {
-      z.string().email().parse(email);
+    for (const recipient of parseManualRecipients(manual)) {
       try {
-        ids.push((await api.post('/recipients', { email })).data.id);
+        ids.push((await api.post('/recipients', recipient)).data.id);
       } catch (e) {
         if (e.response?.status !== 409) throw e;
-        const found = (await api.get(`/recipients?q=${encodeURIComponent(email)}`)).data.items.find(
-          (r) => r.email === email.toLowerCase(),
+        const found = (await api.get(`/recipients?q=${encodeURIComponent(recipient.email)}`)).data.items.find(
+          (r) => r.email === recipient.email,
         );
         if (found) ids.push(found.id);
       }
@@ -171,14 +185,14 @@ export default function Compose() {
                 {recipientIds.length + parseEmails(manual).length} selected
               </span>
             </div>
-            <Field label="Add email addresses">
+            <Field label="Add recipients manually">
               <input
                 value={manual}
                 onChange={(e) => setManual(e.target.value)}
-                placeholder="alex@company.com, jordan@company.com"
+                placeholder="Alex Khan <alex@company.com>, Jordan Ali <jordan@company.com>"
               />
             </Field>
-            <small>New contacts require consent in Recipients before production delivery.</small>
+            <small>For every new contact, full name and email are required. Use Full name &lt;email address&gt;.</small>
             <input
               className="mt-3"
               placeholder="Search saved recipients"

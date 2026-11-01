@@ -142,7 +142,7 @@ export default function Overview() {
             <div>
               <Bot size={36} />
             </div>
-            <span>MAILFORGE AI</span>
+            <span>OUTREACH STUDIO</span>
           </div>
           <div className="flow-node send-node">
             <Send />

@@ -2,7 +2,9 @@
 
 Both recipient/document review screens submit selected rows using one
 `POST /api/v1/recipients/import` request: `{ "recipients": [...] }`.
-The limit is 1,000 selected contacts per request. The complete list is validated before writes.
+Every selected record requires a non-blank `name` and a valid `email`; the limit is 1,000 selected
+contacts per request. The complete list is validated before writes, so an incomplete row never causes
+a partial import.
 
 The backend normalizes emails, keeps the first occurrence within the input, then executes a
 PostgreSQL batch upsert inside one transaction. Account ownership comes from authenticated identity.
