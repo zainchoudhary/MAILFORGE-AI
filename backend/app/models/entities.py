@@ -25,6 +25,8 @@ class Organization(Identity, Base):
 
 class User(Tenant, Base):
     __tablename__ = "users"
+    # Every account owns a private namespace; sharing is disallowed at DB level.
+    __table_args__ = (UniqueConstraint("organization_id", name="uq_users_private_namespace"),)
     email: Mapped[str] = mapped_column(String(320), unique=True)
     name: Mapped[str] = mapped_column(String(200))
     password_hash: Mapped[str] = mapped_column(Text)
@@ -137,7 +139,7 @@ class CampaignRecipient(Tenant, Base):
 class EmailMessage(Tenant, Base):
     __tablename__ = "email_messages"
     campaign_id: Mapped[str] = mapped_column(ForeignKey("campaigns.id"), index=True)
-    recipient_id: Mapped[str] = mapped_column(ForeignKey("recipients.id"))
+    recipient_id: Mapped[str | None] = mapped_column(ForeignKey("recipients.id"))
     recipient_email: Mapped[str] = mapped_column(String(320), index=True)
     recipient_name: Mapped[str] = mapped_column(String(200))
     subject: Mapped[str] = mapped_column(Text)

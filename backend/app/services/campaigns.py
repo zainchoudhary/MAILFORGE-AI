@@ -101,9 +101,20 @@ def detail(db, campaign):
     links = db.scalars(
         select(CampaignRecipient).where(CampaignRecipient.campaign_id == campaign.id)
     ).all()
+    recipient_ids = [link.recipient_id for link in links]
+    recipients = {
+        recipient.id: recipient
+        for recipient in db.scalars(
+            select(Recipient).where(
+                Recipient.organization_id == campaign.organization_id,
+                Recipient.id.in_(recipient_ids),
+            )
+        )
+    } if recipient_ids else {}
     result["recipients"] = [
-        {**serialize(db.get(Recipient, link.recipient_id)), "template_id": link.template_id}
+        {**serialize(recipients[link.recipient_id]), "template_id": link.template_id}
         for link in links
+        if link.recipient_id in recipients
     ]
     docs = db.scalars(
         select(Document)
@@ -143,10 +154,32 @@ def preview(db, campaign):
     links = db.scalars(
         select(CampaignRecipient).where(CampaignRecipient.campaign_id == campaign.id)
     ).all()
+    if not links:
+        return []
+    recipients = {r.id: r for r in db.scalars(select(Recipient).where(
+        Recipient.organization_id == campaign.organization_id,
+        Recipient.id.in_([link.recipient_id for link in links]),
+    ))}
+    templates = {t.id: t for t in db.scalars(select(Template).where(
+        Template.organization_id == campaign.organization_id,
+        Template.id.in_([link.template_id for link in links if link.template_id]),
+    ))}
+    suppressed = set(db.scalars(select(Suppression.email).where(
+        Suppression.organization_id == campaign.organization_id,
+        Suppression.email.in_([r.email for r in recipients.values()]),
+    )))
+    consent_by_recipient = {}
+    for consent in db.scalars(select(Consent).where(
+        Consent.organization_id == campaign.organization_id,
+        Consent.recipient_id.in_(list(recipients)),
+    ).order_by(Consent.created_at.desc())):
+        consent_by_recipient.setdefault(consent.recipient_id, consent.granted)
     output = []
     for link in links:
-        recipient = db.get(Recipient, link.recipient_id)
-        template = db.get(Template, link.template_id) if link.template_id else campaign
+        recipient = recipients.get(link.recipient_id)
+        template = templates.get(link.template_id) if link.template_id else campaign
+        if recipient is None or template is None:
+            raise HTTPException(422, "A campaign recipient or template is unavailable")
         try:
             subject = personalize(template.subject, recipient)
             body = personalize(template.body, recipient, escape=True)
@@ -159,7 +192,8 @@ def preview(db, campaign):
                 "name": recipient.name,
                 "subject": subject,
                 "body": body,
-                "eligible": eligible(db, campaign.organization_id, recipient),
+                "eligible": bool(not recipient.deleted and recipient.email not in suppressed
+                                 and consent_by_recipient.get(recipient.id, False)),
             }
         )
     return output

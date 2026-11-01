@@ -102,7 +102,7 @@ def deliver(identifier):
             or s.dry_run
         ):
             return
-        recipients = [db.get(Recipient, msg.recipient_id)]
+        recipients = [db.get(Recipient, msg.recipient_id) if msg.recipient_id else None]
         recipients += [
             db.scalar(
                 select(Recipient).where(

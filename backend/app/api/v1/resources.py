@@ -1,7 +1,7 @@
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import FileResponse
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update, func
 from app.database.session import get_db
 from app.security.auth import current_user, editor, admin, encrypt
 from app.models.entities import (
@@ -22,6 +22,7 @@ from app.models.entities import (
 )
 from app.schemas.inputs import (
     RecipientInput,
+    BulkRecipientDelete,
     ConsentInput,
     TemplateInput,
     SMTPInput,
@@ -125,13 +126,22 @@ def recipients(
     if q:
         conditions.append(Recipient.email.ilike(f"%{q}%") | Recipient.name.ilike(f"%{q}%"))
     result = page(db, Recipient, user.organization_id, page_number, limit, conditions)
-    for row in result["items"]:
-        consent = db.scalar(
+    # Fetch consent history for the whole page in one query. The previous
+    # per-recipient lookup caused one remote Neon round-trip per row.
+    recipient_ids = [row["id"] for row in result["items"]]
+    latest_consent = {}
+    if recipient_ids:
+        for consent in db.scalars(
             select(Consent)
-            .where(Consent.recipient_id == row["id"])
+            .where(
+                Consent.organization_id == user.organization_id,
+                Consent.recipient_id.in_(recipient_ids),
+            )
             .order_by(Consent.created_at.desc())
-            .limit(1)
-        )
+        ):
+            latest_consent.setdefault(consent.recipient_id, consent)
+    for row in result["items"]:
+        consent = latest_consent.get(row["id"])
         row["consent"] = bool(consent and consent.granted)
     return result
 
@@ -185,11 +195,16 @@ def update_recipient(
 
 @router.delete("/recipients/{identifier}", tags=["Recipients"])
 def delete_recipient(identifier: str, user=Depends(editor), db=Depends(get_db)):
-    item = owned(db, Recipient, identifier, user.organization_id)
-    item.deleted = True
-    audit(db, user, "recipient.deleted", item.id)
-    db.commit()
-    return {"ok": True}
+    from app.services.recipients import permanently_delete
+    return permanently_delete(db, user, [identifier])
+
+
+@router.post("/recipients/bulk-delete", tags=["Recipients"])
+def bulk_delete_recipients(
+    data: BulkRecipientDelete, user=Depends(editor), db=Depends(get_db)
+):
+    from app.services.recipients import permanently_delete
+    return permanently_delete(db, user, data.recipient_ids)
 
 
 @router.delete("/documents/{identifier}", tags=["Documents"])
