@@ -10,20 +10,10 @@ export async function importReviewedRecipients(rows) {
   if (selected.some((row) => !row.email?.trim())) {
     throw new Error('Each selected recipient needs an email address.');
   }
-  let added = 0;
-  let duplicates = 0;
-  for (const { selected: checked, ...payload } of selected) {
-    try {
-      await api.post('/recipients', payload);
-      added++;
-    } catch (error) {
-      if (error.response?.status === 409) duplicates++;
-      else {
-        throw new Error(`${added} saved before import stopped. Review and retry; existing addresses will be skipped.`);
-      }
-    }
-  }
-  return { added, duplicates };
+  if (selected.length > 1000) throw new Error('Select up to 1,000 contacts per import.');
+  const recipients = selected.map(({ selected: checked, ...payload }) => payload);
+  const { data } = await api.post('/recipients/import', { recipients });
+  return data;
 }
 
 export const importSummary = ({ added, duplicates }) =>

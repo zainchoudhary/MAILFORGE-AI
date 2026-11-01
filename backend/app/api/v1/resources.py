@@ -23,6 +23,7 @@ from app.models.entities import (
 from app.schemas.inputs import (
     RecipientInput,
     BulkRecipientDelete,
+    BulkRecipientImport,
     ConsentInput,
     TemplateInput,
     SMTPInput,
@@ -144,6 +145,12 @@ def recipients(
         consent = latest_consent.get(row["id"])
         row["consent"] = bool(consent and consent.granted)
     return result
+
+
+@router.post("/recipients/import", tags=["Recipients"])
+def import_recipients(data: BulkRecipientImport, user=Depends(editor), db=Depends(get_db)):
+    from app.services.recipient_import import import_batch
+    return import_batch(db, user, data.recipients)
 
 
 @router.post("/recipients", tags=["Recipients"], status_code=201)

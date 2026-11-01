@@ -41,6 +41,10 @@ class BulkRecipientDelete(Input):
     recipient_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
+class BulkRecipientImport(Input):
+    recipients: list[RecipientInput] = Field(min_length=1, max_length=1000)
+
+
 class ConsentInput(Input):
     granted: bool
     source: str = Field(min_length=3, max_length=2000)
