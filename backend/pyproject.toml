@@ -1,0 +1,12 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = [".venv", "migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/conftest.py" = ["E402", "F401"]
+"app/models/__init__.py" = ["F401"]
+"migrations/env.py" = ["F401"]
