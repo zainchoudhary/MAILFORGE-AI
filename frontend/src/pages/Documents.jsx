@@ -3,6 +3,7 @@ import { FilePreview } from '../components/FilePreview';
 import { Check, Download, FileScan, FileText, Plus, ScanLine, Trash2, Users } from 'lucide-react';
 import { useApi, useAction } from '../hooks/useApi';
 import { api, downloadFile } from '../services/api';
+import { importReviewedRecipients, importSummary } from '../services/recipientImport';
 import {
   PageHeader,
   QueryState,
@@ -33,25 +34,15 @@ export default function Documents() {
     const { data } = await api.post(`/documents/${doc.id}/extract`);
     setRows(data.status === 'completed' ? data.records || [] : null);
     return data;
-  }, 'Extraction complete');
+  }, null);
   const remove = useAction((id) => api.delete(`/documents/${id}`), 'Document deleted');
   const records = rows ?? extraction.data?.records ?? [];
   const importAction = useAction(async () => {
-    let added = 0,
-      duplicates = 0;
-    for (const r of records.filter((r) => r.selected !== false)) {
-      const { selected, ...payload } = r;
-      try {
-        await api.post('/recipients', payload);
-        added++;
-      } catch (e) {
-        if (e.response?.status === 409) duplicates++;
-        else throw e;
-      }
-    }
-    setRows([]);
-    return { added, duplicates };
-  }, 'Reviewed recipients saved; duplicates were skipped. Record consent before sending.');
+    return importReviewedRecipients(records);
+  }, importSummary, {
+    invalidatePrefixes: ['/recipients', '/analytics'],
+    onSuccess: () => setRows([]),
+  });
   function edit(index, key, value) {
     setRows(records.map((r, i) => (i === index ? { ...r, [key]: value } : r)));
   }
@@ -183,6 +174,19 @@ export default function Documents() {
           {extraction.data?.error && <div className="error-panel">{extraction.data.error}</div>}
           {records.length ? (
             <div className="table-scroll">
+                <div className="flex justify-between items-center mb-3">
+                  <small>{records.filter((r) => r.selected !== false).length} of {records.length} selected</small>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      const selectAll = records.some((r) => r.selected === false);
+                      setRows(records.map((r) => ({ ...r, selected: selectAll })));
+                    }}
+                  >
+                    {records.some((r) => r.selected === false) ? 'Select all' : 'Deselect all'}
+                  </Button>
+                </div>
               <table>
                 <thead>
                   <tr>
@@ -265,9 +269,8 @@ export default function Documents() {
         open={!!deleteTarget}
         itemLabel={deleteTarget?.filename}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        onConfirm={() => {
-          remove.mutate(deleteTarget.id);
-          setDeleteTarget(null);
+        onConfirm={async () => {
+          await remove.mutateAsync(deleteTarget.id);
           if (selected?.id === deleteTarget.id) setSelected(null);
         }}
       />

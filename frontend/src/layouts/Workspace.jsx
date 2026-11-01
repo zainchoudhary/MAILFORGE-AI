@@ -39,7 +39,7 @@ const groups = [
       ['Overview', '/', LayoutDashboard],
       ['AI Agent Studio', '/studio', Bot],
       ['Compose email', '/compose', Mail],
-      ['Document intelligence', '/documents', FileScan],
+      ['Recipients', '/recipients', Users],
     ],
   ],
   [
@@ -47,7 +47,7 @@ const groups = [
     [
       ['Campaigns', '/campaigns', FolderKanban],
       ['Email activity', '/activity', Activity],
-      ['Recipients', '/recipients', Users],
+      ['Document intelligence', '/documents', FileScan],
       ['Templates', '/templates', Layers],
       ['Analytics', '/analytics', BarChart3],
       ['Automation', '/automation', Zap],
@@ -222,13 +222,9 @@ export default function Workspace() {
         confirmLabel="Sign out"
         message="Are you sure you want to sign out of this workspace?"
         onConfirm={async () => {
-          try {
-            await api.post('/auth/logout');
-          } finally {
-            logout();
-            client.clear();
-            setLogoutOpen(false);
-          }
+          await api.post('/auth/logout');
+          logout();
+          client.clear();
         }}
       />
       <div className="workspace-main">

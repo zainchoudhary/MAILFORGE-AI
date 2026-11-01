@@ -33,8 +33,7 @@ export default function Templates() {
       ? await api.put(`/templates/${editing.id}`, values)
       : await api.post('/templates', values);
     if (attachment) await api.post(`/templates/${data.id}/attachments/${attachment}`);
-    setOpen(false);
-  }, 'Template saved');
+  }, 'Template saved', { onSuccess: () => setOpen(false) });
   function show(t) {
     setEditing(t);
     form.reset(
@@ -95,6 +94,7 @@ export default function Templates() {
       <Dialog
         open={open}
         onOpenChange={setOpen}
+        busy={save.isPending || unlink.isPending}
         title={editing ? 'Edit template' : 'Create template'}
       >
         <form className="mt-5" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
@@ -125,14 +125,14 @@ export default function Templates() {
               </Button>
             </div>
           ))}
-          <BusyButton busy={save.isPending}>Save template</BusyButton>
+          <BusyButton busy={save.isPending}>{save.isPending ? 'Saving…' : 'Save template'}</BusyButton>
         </form>
       </Dialog>
       <ConfirmDialog
         open={!!deleteTarget}
         itemLabel={deleteTarget?.name}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        onConfirm={() => { remove.mutate(deleteTarget.id); setDeleteTarget(null); }}
+        onConfirm={() => remove.mutateAsync(deleteTarget.id)}
       />
     </>
   );

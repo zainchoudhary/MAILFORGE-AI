@@ -119,8 +119,11 @@ export default function Compose() {
     const result = editId
       ? await api.put(`/campaigns/${editId}`, payload)
       : await api.post('/emails/compose', payload);
-    navigate(`/campaigns/${result.data.id}`);
-  }, 'Draft saved. Review recipients before approval.');
+    return result.data;
+  }, 'Draft saved. Review recipients before approval.', {
+    invalidatePrefixes: ['/campaigns', '/recipients', '/analytics'],
+    onSuccess: (data) => navigate(`/campaigns/${data.id}`),
+  });
   return (
     <>
       <PageHeader

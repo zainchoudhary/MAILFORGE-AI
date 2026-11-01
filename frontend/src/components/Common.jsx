@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Inbox, Loader2, AlertCircle, ArrowRight, UploadCloud, ShieldAlert, LogOut, Trash2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { useAction } from '../hooks/useApi';
@@ -68,23 +69,41 @@ export function Status({ value }) {
 }
 export function BusyButton({ busy, children, ...props }) {
   return (
-    <Button disabled={busy || props.disabled} {...props}>
+    <Button {...props} disabled={busy || props.disabled} aria-busy={!!busy}>
       {busy && <Loader2 size={16} className="animate-spin" />}
       {children}
     </Button>
   );
 }
-export function ConfirmDialog({ open, onOpenChange, title = 'Confirm deletion', itemLabel, message, confirmLabel = 'Delete permanently', onConfirm }) {
+export function ConfirmDialog({ open, onOpenChange, title = 'Confirm deletion', itemLabel, message, confirmLabel = 'Delete permanently', processingLabel, onConfirm }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const isLogout = /sign out/i.test(title);
   const isDelete = /delete/i.test(confirmLabel);
   const Icon = isLogout ? LogOut : isDelete ? Trash2 : ShieldAlert;
+  async function confirm() {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await onConfirm();
+      onOpenChange(false);
+    } catch (requestError) {
+      setError(requestError.response?.data?.detail || requestError.message || 'Action failed. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title={title} icon={Icon} description="Review this action before confirming." className={`confirm-modal ${isDelete ? 'confirm-delete' : 'confirm-neutral'}`}>
+    <Dialog open={open} onOpenChange={(next) => { if (!next) setError(''); onOpenChange(next); }} busy={busy} title={title} icon={Icon} description="Review this action before confirming." className={`confirm-modal ${isDelete ? 'confirm-delete' : 'confirm-neutral'}`}>
       <div className="confirm-modal-body">
         <p>{message || <>Are you sure you want to delete <strong>{itemLabel}</strong>? This action cannot be undone.</>}</p>
+        {error && <div className="error-panel" role="alert">{error}</div>}
         <div className="confirm-modal-actions">
-          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>{isLogout ? 'Stay signed in' : isDelete ? 'Keep it' : 'Go back'}</Button>
-          <Button type="button" variant={isDelete ? 'destructive' : 'default'} onClick={onConfirm}>{confirmLabel}</Button>
+          <Button type="button" variant="secondary" disabled={busy} onClick={() => onOpenChange(false)}>{isLogout ? 'Stay signed in' : isDelete ? 'Keep it' : 'Go back'}</Button>
+          <BusyButton type="button" variant={isDelete ? 'destructive' : 'default'} busy={busy} onClick={confirm}>
+            {busy ? (processingLabel || `${confirmLabel.replace(/ permanently$/i, '')}…`) : confirmLabel}
+          </BusyButton>
         </div>
       </div>
     </Dialog>
@@ -118,7 +137,7 @@ export function Pagination({ data, page, setPage }) {
     </div>
   );
 }
-export function Uploader({ onUploaded, compact = false }) {
+export function Uploader({ onUploaded, onBusyChange, multiple = true, compact = false }) {
   const upload = useAction(async (files) => {
     const docs = [];
     for (const file of files) {
@@ -126,18 +145,24 @@ export function Uploader({ onUploaded, compact = false }) {
       body.append('file', file);
       docs.push((await api.post('/documents/upload', body)).data);
     }
-    onUploaded?.(docs);
     return docs;
-  }, 'Files uploaded securely');
+  }, 'Files uploaded securely', {
+    invalidatePrefixes: ['/documents'],
+    onSuccess: (docs) => onUploaded?.(docs),
+    onSettled: () => onBusyChange?.(false),
+  });
   return (
     <label className={`upload-zone ${compact ? 'compact' : ''}`}>
       <input
         type="file"
-        multiple
+        multiple={multiple}
         accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.xml,.txt,.json,.png,.jpg,.jpeg"
         disabled={upload.isPending}
         onChange={(e) => {
-          if (e.target.files.length) upload.mutate([...e.target.files]);
+          if (e.target.files.length) {
+            onBusyChange?.(true);
+            upload.mutate([...e.target.files]);
+          }
           e.target.value = '';
         }}
       />

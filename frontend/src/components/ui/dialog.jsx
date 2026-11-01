@@ -16,7 +16,9 @@ export function Dialog({ open, onOpenChange, title, children, className = '', ic
           <DialogPrimitive.Close disabled={busy} className="modal-close" aria-label="Close">
             <X size={18} />
           </DialogPrimitive.Close>
-          {children}
+          <fieldset disabled={busy} aria-busy={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+            <div inert={busy ? '' : undefined}>{children}</div>
+          </fieldset>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

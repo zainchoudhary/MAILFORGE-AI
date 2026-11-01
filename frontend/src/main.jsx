@@ -7,7 +7,19 @@ import { AuthProvider } from './context/AuthContext';
 import App from './App';
 import './styles/index.css';
 const client = new QueryClient({
-  defaultOptions: { queries: { retry: 1, staleTime: 10000, refetchOnWindowFocus: false } },
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error) =>
+        !error.response || [408, 429, 500, 502, 503, 504].includes(error.response.status)
+          ? failureCount < 2
+          : false,
+      staleTime: 15000,
+      gcTime: 10 * 60 * 1000,
+      refetchOnWindowFocus: 'always',
+      refetchOnReconnect: true,
+    },
+    mutations: { retry: false },
+  },
 });
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

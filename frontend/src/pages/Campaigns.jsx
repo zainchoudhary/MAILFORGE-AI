@@ -155,7 +155,7 @@ export default function Campaigns() {
         open={!!deleteTarget}
         itemLabel={deleteTarget?.name}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        onConfirm={() => { remove.mutate(deleteTarget.id); setDeleteTarget(null); }}
+        onConfirm={() => remove.mutateAsync(deleteTarget.id)}
       />
     </>
   );
@@ -186,8 +186,10 @@ export function CampaignDetail() {
     );
     if (name === 'dry-run') setResult(data);
     if (name === 'duplicate') navigate(`/campaigns/${data.id}`);
-    setApproval(false);
-  }, 'Campaign updated');
+  }, 'Campaign updated', {
+    onSuccess: () => setApproval(false),
+    onError: () => setApprovalStarting(false),
+  });
   const test = useAction(
     () => api.post('/emails/send-test', { campaign_id: id, recipient: me.data.email }),
     'Test request recorded; inspect the test campaign for its outcome',
@@ -538,7 +540,7 @@ export function CampaignDetail() {
               />
             )}
           </Dialog>
-          <Dialog open={approval} onOpenChange={setApproval} title="Approve production delivery">
+          <Dialog open={approval} onOpenChange={setApproval} busy={action.isPending} title="Approve production delivery">
             <p className="my-5">
               This authorizes delivery to {c.recipients.length} selected recipients. The server will
               enforce consent, suppression, SMTP, and dry-run checks.
@@ -560,7 +562,7 @@ export function CampaignDetail() {
                 action.mutate('approve');
               }}
             >
-              {approvalStarting ? 'Starting delivery…' : 'Approve and queue'}
+              {approvalStarting || action.isPending ? 'Processing…' : 'Approve and queue'}
             </BusyButton>
           </Dialog>
           <ConfirmDialog
@@ -569,7 +571,7 @@ export function CampaignDetail() {
             title="Cancel campaign delivery"
             confirmLabel="Cancel delivery"
             message="Cancel queued delivery? Messages already being sent cannot be recalled."
-            onConfirm={() => { action.mutate('cancel'); setCancelOpen(false); }}
+            onConfirm={() => action.mutateAsync('cancel')}
           />
         </>
       )}

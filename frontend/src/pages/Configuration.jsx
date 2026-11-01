@@ -46,9 +46,8 @@ export function SMTP() {
   });
   const save = useAction(async (values) => {
     await api.post('/smtp/accounts', values);
-    setOpen(false);
     form.setValue('password', '');
-  }, 'SMTP account stored securely');
+  }, 'SMTP account stored securely', { onSuccess: () => setOpen(false) });
   const test = useAction(
     (id) => api.post(`/smtp/test?account_id=${id}`),
     'SMTP connection verified',
@@ -124,7 +123,7 @@ export function SMTP() {
           )
         }
       </QueryState>
-      <Dialog open={open} onOpenChange={setOpen} title="Add SMTP account">
+      <Dialog open={open} onOpenChange={setOpen} busy={save.isPending} title="Add SMTP account">
         <form className="mt-5" onSubmit={form.handleSubmit((v) => save.mutate(v))}>
           {[
             ['name', 'Account label'],
@@ -148,14 +147,14 @@ export function SMTP() {
               <option value="ssl">Implicit TLS / SSL</option>
             </select>
           </Field>
-          <BusyButton busy={save.isPending}>Store encrypted account</BusyButton>
+          <BusyButton busy={save.isPending}>{save.isPending ? 'Saving…' : 'Store encrypted account'}</BusyButton>
         </form>
       </Dialog>
       <ConfirmDialog
         open={!!deleteTarget}
         itemLabel={deleteTarget?.name}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        onConfirm={() => { remove.mutate(deleteTarget.id); setDeleteTarget(null); }}
+        onConfirm={() => remove.mutateAsync(deleteTarget.id)}
       />
     </>
   );
@@ -289,7 +288,7 @@ export function Settings() {
         itemLabel={suppressionTarget?.email}
         title="Remove suppression"
         onOpenChange={(open) => !open && setSuppressionTarget(null)}
-        onConfirm={() => { unsuppress.mutate(suppressionTarget.id); setSuppressionTarget(null); }}
+        onConfirm={() => unsuppress.mutateAsync(suppressionTarget.id)}
       />
     </>
   );
