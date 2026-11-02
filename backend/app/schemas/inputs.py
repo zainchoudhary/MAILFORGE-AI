@@ -60,6 +60,19 @@ class BulkRecipientImport(Input):
     recipients: list[RecipientInput] = Field(min_length=1, max_length=1000)
 
 
+class RecipientGroupInput(Input):
+    name: str = Field(min_length=1, max_length=200)
+    recipient_ids: list[str] = Field(min_length=2, max_length=1000)
+
+    @field_validator("name")
+    @classmethod
+    def required_group_name(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Group name is required")
+        return value
+
+
 class ConsentInput(Input):
     granted: bool
     source: str = Field(min_length=3, max_length=2000)

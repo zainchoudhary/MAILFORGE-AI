@@ -12,6 +12,7 @@ const CampaignDetail = lazy(() =>
 );
 const Documents = lazy(() => import('./pages/Documents'));
 const Recipients = lazy(() => import('./pages/Recipients'));
+const RecipientGroups = lazy(() => import('./pages/RecipientGroups'));
 const Activity = lazy(() => import('./pages/Activity'));
 const EmailDetail = lazy(() =>
   import('./pages/Activity').then((m) => ({ default: m.EmailDetail })),
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="activity" element={<Activity />} />
           <Route path="activity/:id" element={<EmailDetail />} />
           <Route path="recipients" element={<Recipients />} />
+          <Route path="recipient-groups" element={<RecipientGroups />} />
           <Route path="templates" element={<Templates />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="automation" element={<Automation />} />

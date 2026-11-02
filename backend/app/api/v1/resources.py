@@ -8,6 +8,8 @@ from app.models.entities import (
     Document,
     Extraction,
     Recipient,
+    RecipientGroup,
+    GroupMember,
     Consent,
     Suppression,
     Template,
@@ -24,6 +26,7 @@ from app.schemas.inputs import (
     RecipientInput,
     BulkRecipientDelete,
     BulkRecipientImport,
+    RecipientGroupInput,
     ConsentInput,
     TemplateInput,
     SMTPInput,
@@ -145,6 +148,107 @@ def recipients(
         consent = latest_consent.get(row["id"])
         row["consent"] = bool(consent and consent.granted)
     return result
+
+
+def group_payloads(db, organization_id):
+    """Return groups and saved members without one query per group."""
+    groups = list(db.scalars(
+        select(RecipientGroup)
+        .where(RecipientGroup.organization_id == organization_id)
+        .order_by(RecipientGroup.created_at.desc())
+    ))
+    if not groups:
+        return []
+    member_ids = {group.id: [] for group in groups}
+    for group_id, recipient_id in db.execute(
+        select(GroupMember.group_id, GroupMember.recipient_id).where(
+            GroupMember.organization_id == organization_id,
+            GroupMember.group_id.in_(member_ids),
+        )
+    ):
+        member_ids[group_id].append(recipient_id)
+    return [
+        {**serialize(group), "recipient_ids": member_ids[group.id], "recipient_count": len(member_ids[group.id])}
+        for group in groups
+    ]
+
+
+def validate_group_members(db, user, identifiers):
+    recipient_ids = list(dict.fromkeys(identifiers))
+    found = set(db.scalars(
+        select(Recipient.id).where(
+            Recipient.organization_id == user.organization_id,
+            Recipient.deleted.is_(False),
+            Recipient.id.in_(recipient_ids),
+        )
+    ))
+    if len(found) != len(recipient_ids):
+        raise HTTPException(422, "One or more selected recipients are unavailable in this account")
+    return recipient_ids
+
+
+@router.get("/recipient-groups", tags=["Recipient groups"])
+def recipient_groups(user=Depends(current_user), db=Depends(get_db)):
+    return {"items": group_payloads(db, user.organization_id)}
+
+
+@router.post("/recipient-groups", tags=["Recipient groups"], status_code=201)
+def create_recipient_group(data: RecipientGroupInput, user=Depends(editor), db=Depends(get_db)):
+    duplicate = db.scalar(select(RecipientGroup.id).where(
+        RecipientGroup.organization_id == user.organization_id,
+        RecipientGroup.name == data.name,
+    ))
+    if duplicate:
+        raise HTTPException(409, "A recipient group with this name already exists")
+    recipient_ids = validate_group_members(db, user, data.recipient_ids)
+    group = RecipientGroup(organization_id=user.organization_id, name=data.name)
+    db.add(group)
+    db.flush()
+    db.add_all([
+        GroupMember(organization_id=user.organization_id, group_id=group.id, recipient_id=recipient_id)
+        for recipient_id in recipient_ids
+    ])
+    audit(db, user, "recipient_group.created", group.id, {"members": len(recipient_ids)})
+    db.commit()
+    return {**serialize(group), "recipient_ids": recipient_ids, "recipient_count": len(recipient_ids)}
+
+
+@router.put("/recipient-groups/{identifier}", tags=["Recipient groups"])
+def update_recipient_group(identifier: str, data: RecipientGroupInput, user=Depends(editor), db=Depends(get_db)):
+    group = owned(db, RecipientGroup, identifier, user.organization_id)
+    duplicate = db.scalar(select(RecipientGroup.id).where(
+        RecipientGroup.organization_id == user.organization_id,
+        RecipientGroup.name == data.name,
+        RecipientGroup.id != group.id,
+    ))
+    if duplicate:
+        raise HTTPException(409, "A recipient group with this name already exists")
+    recipient_ids = validate_group_members(db, user, data.recipient_ids)
+    group.name = data.name
+    db.execute(delete(GroupMember).where(
+        GroupMember.organization_id == user.organization_id,
+        GroupMember.group_id == group.id,
+    ))
+    db.add_all([
+        GroupMember(organization_id=user.organization_id, group_id=group.id, recipient_id=recipient_id)
+        for recipient_id in recipient_ids
+    ])
+    audit(db, user, "recipient_group.updated", group.id, {"members": len(recipient_ids)})
+    db.commit()
+    return {**serialize(group), "recipient_ids": recipient_ids, "recipient_count": len(recipient_ids)}
+
+
+@router.delete("/recipient-groups/{identifier}", tags=["Recipient groups"])
+def delete_recipient_group(identifier: str, user=Depends(editor), db=Depends(get_db)):
+    group = owned(db, RecipientGroup, identifier, user.organization_id)
+    db.execute(delete(GroupMember).where(
+        GroupMember.organization_id == user.organization_id,
+        GroupMember.group_id == group.id,
+    ))
+    db.delete(group)
+    audit(db, user, "recipient_group.deleted", group.id)
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/recipients/import", tags=["Recipients"])

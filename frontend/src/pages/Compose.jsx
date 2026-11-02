@@ -55,6 +55,7 @@ export default function Compose() {
   const recipients = useApi(
     `/recipients?limit=100&page=${recipientPage}&q=${encodeURIComponent(recipientQuery)}`,
   );
+  const recipientGroups = useApi('/recipient-groups');
   const templates = useApi('/templates');
   const accounts = useApi('/smtp/accounts');
   const selectedAccount = accounts.data?.items.find((account) => account.id === smtp);
@@ -193,6 +194,15 @@ export default function Compose() {
               />
             </Field>
             <small>For every new contact, full name and email are required. Use Full name &lt;email address&gt;.</small>
+            {!!recipientGroups.data?.items.length && <div className="compose-group-picker">
+              <span>Saved groups</span>
+              <div>{recipientGroups.data.items.map((group) => {
+                const allSelected = group.recipient_ids.every((id) => recipientIds.includes(id));
+                return <Button key={group.id} size="sm" variant={allSelected ? 'default' : 'secondary'} onClick={() => setRecipientIds((current) => allSelected ? current.filter((id) => !group.recipient_ids.includes(id)) : [...new Set([...current, ...group.recipient_ids])])}>
+                  {group.name} <small>{group.recipient_count}</small>
+                </Button>;
+              })}</div>
+            </div>}
             <input
               className="mt-3"
               placeholder="Search saved recipients"

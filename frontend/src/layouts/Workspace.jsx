@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   Sparkles,
   Users,
+  UserRoundPlus,
   X,
   PanelLeftClose,
   PanelLeftOpen,
@@ -41,6 +42,7 @@ const groups = [
       ['AI Agent Studio', '/studio', Bot],
       ['Compose email', '/compose', Mail],
       ['Recipients', '/recipients', Users],
+      ['Recipient groups', '/recipient-groups', UserRoundPlus],
     ],
   ],
   [
