@@ -12,7 +12,14 @@ class Register(Input):
     name: str = Field(min_length=1, max_length=200)
     organization: str = Field(min_length=1, max_length=200)
     email: EmailStr
-    password: str = Field(min_length=12, max_length=128)
+    password: str = Field(min_length=5, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def strong_password(cls, value):
+        if not all((any(char.isupper() for char in value), any(char.islower() for char in value), any(char.isdigit() for char in value), any(not char.isalnum() for char in value))):
+            raise ValueError("Password must include an uppercase letter, lowercase letter, number, and special character")
+        return value
 
 
 class Login(Input):

@@ -44,7 +44,7 @@ def account(client):
         "/api/v1/auth/register",
         json={
             "email": "owner@example.com",
-            "password": "strong-test-password",
+            "password": "Strong-test1!",
             "name": "Owner",
             "organization": "Acme",
         },

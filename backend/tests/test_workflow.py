@@ -83,7 +83,7 @@ def test_auth_refresh_rotation_and_isolation(client, account):
         "/api/v1/auth/register",
         json={
             "email": "other@example.com",
-            "password": "another-test-password",
+            "password": "Another-test1!",
             "name": "Other",
             "organization": "Other org",
         },
