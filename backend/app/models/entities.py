@@ -228,3 +228,11 @@ class RefreshSession(Tenant, Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked: Mapped[bool] = mapped_column(default=False)
+
+
+class PasswordResetToken(Identity, Base):
+    __tablename__ = "password_reset_tokens"
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

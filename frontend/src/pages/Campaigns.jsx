@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import StatusFilter from '../components/StatusFilter';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowUpRight,
@@ -30,6 +29,7 @@ import {
   BusyButton,
   dateLabel,
   ConfirmDialog,
+  PickerDropdown,
 } from '../components/Common';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
@@ -70,24 +70,26 @@ export default function Campaigns() {
               }}
             />
           </div>
-          <StatusFilter
-            label="Filter campaigns by status"
+          <PickerDropdown
+            ariaLabel="Filter campaigns by status"
             value={status}
             onChange={(value) => {
               setStatus(value);
               setPage(1);
             }}
-            statuses={[
-              'draft',
-              'scheduled',
-              'processing',
-              'sending',
-              'paused',
-              'completed',
-              'partially_completed',
-              'failed',
-              'cancelled',
-            ]}
+            placeholder="All statuses"
+            options={[
+              ['', 'All statuses', 'Show every campaign'],
+              ['draft', 'Draft', 'Still being prepared'],
+              ['scheduled', 'Scheduled', 'Ready for its send time'],
+              ['processing', 'Processing', 'Preparing delivery'],
+              ['sending', 'Sending', 'Delivery in progress'],
+              ['paused', 'Paused', 'Delivery temporarily stopped'],
+              ['completed', 'Completed', 'Delivery finished'],
+              ['partially_completed', 'Partially completed', 'Delivery finished with issues'],
+              ['failed', 'Failed', 'Needs attention'],
+              ['cancelled', 'Cancelled', 'Delivery was stopped'],
+            ].map(([value, label, description]) => ({ value, label, description }))}
           />
           {(q || status) && <Button variant="ghost" size="sm" onClick={() => { setQ(''); setStatus(''); setPage(1); }}>Clear filters</Button>}
         </div>
@@ -226,6 +228,8 @@ export function CampaignDetail() {
             eyebrow="CAMPAIGN WORKSPACE"
             title={c.name}
             description={c.description || c.subject}
+            backTo="/campaigns"
+            backLabel="Back to campaigns"
           >
             <Status value={c.status} />
             <Button variant="secondary" onClick={() => action.mutate('duplicate')}>
@@ -246,7 +250,7 @@ export function CampaignDetail() {
             {[
               ['Selected recipients', c.recipients.length],
               [
-                'SMTP accepted',
+                'Emails sent',
                 (c.counts.smtp_accepted || 0) +
                   (c.counts.delivered || 0) +
                   (c.counts.opened || 0) +
@@ -307,8 +311,8 @@ export function CampaignDetail() {
               <section className="panel">
                 <div className="panel-heading">
                   <div>
-                    <h3>Recipient review</h3>
-                    <p>Only selected, consented recipients can be approved.</p>
+                    <h3>{c.status === 'draft' ? 'Recipient review' : 'Campaign participants'}</h3>
+                    <p>{c.status === 'draft' ? 'Only selected, active recipients can be approved.' : 'Every delivery recipient is retained here, including historical contact snapshots.'}</p>
                   </div>
                   <span className="period-chip">Revision {c.revision}</span>
                 </div>
@@ -354,20 +358,26 @@ export function CampaignDetail() {
                               )}
                             </td>
                             <td>
-                              <Status
-                                value={
-                                  previews.data?.items.find((p) => p.recipient_id === r.id)
-                                    ?.eligible
-                                    ? 'ready'
-                                    : 'needs_consent'
-                                }
-                              />
+                              {r.historical ? (
+                                <span className="period-chip">Delivery snapshot · {r.delivery_status}</span>
+                              ) : (
+                                <Status
+                                  value={
+                                    previews.data?.items.find((p) => p.recipient_id === r.id)
+                                      ?.eligible
+                                      ? 'ready'
+                                      : 'unavailable'
+                                  }
+                                />
+                              )}
                             </td>
                             <td>
                               <Button
                                 size="icon"
                                 variant="ghost"
                                 aria-label={`Preview ${r.email}`}
+                                disabled={r.historical}
+                                title={r.historical ? 'This recipient was removed from the live library' : 'Preview message'}
                                 onClick={() =>
                                   setPreview(
                                     previews.data?.items.find((p) => p.recipient_id === r.id),
@@ -543,7 +553,7 @@ export function CampaignDetail() {
           <Dialog open={approval} onOpenChange={setApproval} busy={action.isPending} title="Approve production delivery">
             <p className="my-5">
               This authorizes delivery to {c.recipients.length} selected recipients. The server will
-              enforce consent, suppression, SMTP, and dry-run checks.
+              enforce recipient availability, suppression, SMTP, and dry-run checks.
             </p>
             <label className="check-label">
               <input

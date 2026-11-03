@@ -8,7 +8,6 @@ from app.models.entities import (
     Document,
     SMTPAccount,
     Template,
-    Consent,
     Suppression,
     EmailMessage,
     EmailEvent,
@@ -32,8 +31,6 @@ def save(db, user, data, campaign=None):
             .execution_options(populate_existing=True)
         )
     ids = list(dict.fromkeys(data.recipient_ids))
-    if len(ids) > s.max_emails_per_run:
-        raise HTTPException(422, f"Maximum {s.max_emails_per_run} recipients per campaign")
     if len(ids) > 1 and (data.cc or data.bcc):
         raise HTTPException(422, "CC/BCC are available for single-recipient campaigns only")
     if data.scheduled_at and data.scheduled_at <= now():
@@ -116,6 +113,30 @@ def detail(db, campaign):
         for link in links
         if link.recipient_id in recipients
     ]
+    # Campaign history must remain understandable after a contact is removed
+    # from the live recipient library. EmailMessage stores the name/address
+    # snapshot used at delivery, so include it when its original link no longer
+    # exists (for example after a permanent recipient deletion).
+    known_addresses = {item["email"].lower() for item in result["recipients"]}
+    for message in db.scalars(
+        select(EmailMessage)
+        .where(EmailMessage.campaign_id == campaign.id)
+        .order_by(EmailMessage.created_at)
+    ):
+        address = message.recipient_email.lower()
+        if address in known_addresses:
+            continue
+        known_addresses.add(address)
+        result["recipients"].append({
+            "id": message.recipient_id or f"delivery-{message.id}",
+            "email": message.recipient_email,
+            "name": message.recipient_name,
+            "company": "",
+            "position": "",
+            "template_id": None,
+            "historical": True,
+            "delivery_status": message.status,
+        })
     docs = db.scalars(
         select(Document)
         .join(Attachment, Attachment.document_id == Document.id)
@@ -141,13 +162,7 @@ def eligible(db, org, recipient):
         )
     ):
         return False
-    consent = db.scalar(
-        select(Consent)
-        .where(Consent.organization_id == org, Consent.recipient_id == recipient.id)
-        .order_by(Consent.created_at.desc())
-        .limit(1)
-    )
-    return bool(consent and consent.granted)
+    return True
 
 
 def preview(db, campaign):
@@ -168,12 +183,6 @@ def preview(db, campaign):
         Suppression.organization_id == campaign.organization_id,
         Suppression.email.in_([r.email for r in recipients.values()]),
     )))
-    consent_by_recipient = {}
-    for consent in db.scalars(select(Consent).where(
-        Consent.organization_id == campaign.organization_id,
-        Consent.recipient_id.in_(list(recipients)),
-    ).order_by(Consent.created_at.desc())):
-        consent_by_recipient.setdefault(consent.recipient_id, consent.granted)
     output = []
     for link in links:
         recipient = recipients.get(link.recipient_id)
@@ -192,8 +201,7 @@ def preview(db, campaign):
                 "name": recipient.name,
                 "subject": subject,
                 "body": body,
-                "eligible": bool(not recipient.deleted and recipient.email not in suppressed
-                                 and consent_by_recipient.get(recipient.id, False)),
+                "eligible": bool(not recipient.deleted and recipient.email not in suppressed),
             }
         )
     return output
@@ -226,9 +234,9 @@ def approve(db, user, campaign, data):
     previews = preview(db, campaign)
     if not previews or any(not p["eligible"] for p in previews):
         raise HTTPException(
-            422, "Every selected recipient needs consent and must not be suppressed"
+            422, "Every selected recipient must be active and not suppressed"
         )
-    # CC/BCC also require independently recorded consent and suppression checks.
+    # CC/BCC recipients must also be active and not suppressed.
     for email in [*campaign.cc, *campaign.bcc]:
         recipient = db.scalar(
             select(Recipient).where(
@@ -236,7 +244,7 @@ def approve(db, user, campaign, data):
             )
         )
         if not recipient or not eligible(db, user.organization_id, recipient):
-            raise HTTPException(422, "CC/BCC recipients must have consent and not be suppressed")
+            raise HTTPException(422, "CC/BCC recipients must be active and not suppressed")
     for item in previews:
         msg = EmailMessage(
             organization_id=user.organization_id,

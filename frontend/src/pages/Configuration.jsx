@@ -263,7 +263,7 @@ export function Settings() {
               <h3>Server-enforced safeguards</h3>
               {[
                 ['Dry run', s.dry_run ? 'Enabled' : 'Disabled — approval required'],
-                ['Maximum recipients', s.max_emails_per_run],
+                ['Campaign recipients', 'Unlimited'],
                 ['Sending interval', `${s.delay_between_emails} seconds`],
                 ['Attachment limit', `${s.max_attachment_bytes / 1000000} MB`],
                 ['AI provider', s.ai_provider],

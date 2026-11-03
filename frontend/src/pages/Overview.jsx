@@ -69,7 +69,7 @@ export function ActivityChart({ data }) {
           fill="url(#chartFill)"
         />
         <Area
-          name="SMTP accepted"
+          name="Emails sent"
           type="monotone"
           dataKey="accepted"
           stroke="#16A34A"
@@ -85,13 +85,32 @@ export function ActivityChart({ data }) {
     />
   );
 }
+function DashboardPageSkeleton() {
+  return <div className="dashboard-intelligence-loader" role="status" aria-live="polite">
+    <div className="dashboard-loader-experience">
+      <div className="dashboard-loader-core" aria-hidden="true">
+        <div className="dashboard-loader-ring ring-one" /><div className="dashboard-loader-ring ring-two" /><div className="dashboard-loader-ring ring-three" />
+        <span className="dashboard-loader-node node-document"><FileScan size={15} /></span>
+        <span className="dashboard-loader-node node-audience"><Users size={15} /></span>
+        <span className="dashboard-loader-node node-delivery"><Send size={15} /></span>
+        <div className="dashboard-loader-orb"><Sparkles size={27} /><i /><i /><i /></div>
+      </div>
+      <div className="dashboard-loader-copy"><span>AI WORKSPACE</span><h2>Building your command center</h2><p>Synchronizing your audience, delivery activity, and campaign insights.</p></div>
+      <div className="dashboard-loader-progress"><div><span>Preparing your live workspace</span><b>Syncing</b></div><i><em /><em /><em /><em /></i><small><span>Audience</span><span>Activity</span><span>Campaigns</span><span>Insights</span></small></div>
+    </div>
+  </div>;
+}
 export default function Overview() {
   const metrics = useApi('/analytics/overview', { refetchInterval: 15000 });
   const activity = useApi('/analytics/emails?days=30');
   const campaigns = useApi('/campaigns?limit=5');
   const settings = useApi('/settings');
+  const dashboardLoading = [metrics, activity, campaigns, settings].some((query) => query.isPending);
+  const dashboardError = [metrics, activity, campaigns, settings].find((query) => query.isError);
+  if (dashboardLoading) return <DashboardPageSkeleton />;
+  if (dashboardError) return <div className="dashboard-load-error"><Sparkles size={23} /><h2>We couldn’t finish preparing your dashboard</h2><p>Check your connection, then try loading your live workspace again.</p><Button onClick={() => dashboardError.refetch()}>Try again</Button></div>;
   return (
-    <>
+    <div className="dashboard-reveal">
       <PageHeader
         eyebrow="YOUR EMAIL COMMAND CENTER"
         title="Workspace overview"
@@ -100,7 +119,7 @@ export default function Overview() {
         <Button variant="secondary" asChild>
           <Link to="/documents">
             <FileScan size={16} />
-            Import documents
+            Manage attachments
           </Link>
         </Button>
         <Button asChild>
@@ -160,7 +179,7 @@ export default function Overview() {
               {[
                 ['Total campaigns', m.campaigns, Workflow, 'Across your workspace'],
                 ['Recipients', m.recipients, Users, 'Unique recipient records'],
-                ['SMTP accepted', m.smtp_accepted, Send, 'Accepted by sending server'],
+                ['Emails sent', m.smtp_accepted, Send, 'Accepted by your email server'],
                 [
                   'Confirmed deliveries',
                   m.confirmed_deliveries,
@@ -195,7 +214,7 @@ export default function Overview() {
                   </span>
                   <span>
                     <i style={{ background: '#16A34A' }} />
-                    SMTP accepted
+                    Emails sent
                   </span>
                 </div>
               </section>
@@ -355,6 +374,6 @@ export default function Overview() {
           </div>
         </section>
       </div>
-    </>
+    </div>
   );
 }

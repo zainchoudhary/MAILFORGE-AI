@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import StatusFilter from '../components/StatusFilter';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowUpRight, Download } from 'lucide-react';
+import { ArrowUpRight, Download, SlidersHorizontal, ArrowDownUp } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { downloadFile } from '../services/api';
-import { PageHeader, QueryState, Empty, Status, Pagination, dateLabel } from '../components/Common';
+import { PageHeader, QueryState, Empty, Status, Pagination, dateLabel, PickerDropdown } from '../components/Common';
 import { EmailPreview } from '../components/RichEditor';
 import { Button } from '../components/ui/button';
 export default function Activity() {
@@ -36,14 +35,16 @@ export default function Activity() {
               setPage(1);
             }}
           />
-          <StatusFilter
-            label="Filter messages by status"
+          <PickerDropdown
+            ariaLabel="Filter messages by status"
             value={status}
+            icon={SlidersHorizontal}
+            placeholder="All statuses"
             onChange={(value) => {
               setStatus(value);
               setPage(1);
             }}
-            statuses={[
+            options={['', ...[
               'queued',
               'sending',
               'smtp_accepted',
@@ -54,13 +55,15 @@ export default function Activity() {
               'clicked',
               'uncertain',
               'cancelled',
-            ]}
+            ]].map((value) => ({ value, label: value ? value.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase()) : 'All statuses' }))}
           />
-          <select aria-label="Sort messages" value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}>
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-            <option value="recipient">Recipient A–Z</option>
-          </select>
+          <PickerDropdown
+            ariaLabel="Sort messages"
+            icon={ArrowDownUp}
+            value={sort}
+            onChange={(value) => { setSort(value); setPage(1); }}
+            options={[{ value: 'newest', label: 'Newest first' }, { value: 'oldest', label: 'Oldest first' }, { value: 'recipient', label: 'Recipient A–Z' }]}
+          />
           {(q || status || sort !== 'newest') && <Button variant="ghost" size="sm" onClick={() => { setQ(''); setStatus(''); setSort('newest'); setPage(1); }}>Clear filters</Button>}
         </div>
         <QueryState query={query}>
@@ -127,6 +130,8 @@ export function EmailDetail() {
             eyebrow="MESSAGE INSPECTION"
             title={m.subject}
             description={`Message ID: ${m.id}`}
+            backTo="/activity"
+            backLabel="Back to email activity"
           >
             <Status value={m.status} />
             <Button variant="secondary" asChild>

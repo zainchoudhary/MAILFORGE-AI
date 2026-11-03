@@ -314,15 +314,18 @@ export default function Recipients() {
           )}
         </QueryState>
       </section>
-      <Dialog open={importOpen} onOpenChange={setImportOpen} busy={uploadBusy || extractDocument.isPending || importRecipients.isPending} title="Import recipients from a document">
+      <Dialog open={importOpen} onOpenChange={setImportOpen} busy={uploadBusy || extractDocument.isPending || importRecipients.isPending} title="Import recipients from Excel">
         <p className="my-4">
-          Upload a contact list, spreadsheet, PDF, Word file, image, or text document. Outreach Studio
-          will find emails and available details, then let you review everything before saving.
+          Upload an Excel contact list (.xlsx or .xls). Review the extracted names and email addresses before saving.
         </p>
         {!importDocument && (
           <Uploader
             compact
             multiple={false}
+            accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+            allowedExtensions={['.xlsx', '.xls']}
+            label="Choose Excel file"
+            description="Excel files only (.xlsx or .xls) · up to 18 MB"
             onBusyChange={setUploadBusy}
             onUploaded={(items) => {
               if (items[0]) {

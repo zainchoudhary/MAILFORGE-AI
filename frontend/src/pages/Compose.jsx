@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Eye, FileText, Save, Sparkles, X, ArrowRight } from 'lucide-react';
+import { Eye, FileText, Save, Send, Sparkles, X, ArrowRight, Check, ChevronDown, UsersRound } from 'lucide-react';
 import { useApi, useAction } from '../hooks/useApi';
 import { api } from '../services/api';
-import { PageHeader, Field, BusyButton, Uploader, sizeLabel } from '../components/Common';
+import { PageHeader, Field, BusyButton, ConfirmDialog, Uploader, sizeLabel, PickerDropdown } from '../components/Common';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 import { RichEditor, EmailPreview } from '../components/RichEditor';
@@ -47,24 +47,39 @@ export default function Compose() {
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
   const [preview, setPreview] = useState(false);
+  const [groupsOpen, setGroupsOpen] = useState(false);
+  const groupDropdownRef = useRef(null);
+  const [sendOpen, setSendOpen] = useState(false);
   const [tone, setTone] = useState('professional');
   const [instruction, setInstruction] = useState('');
   const [action, setAction] = useState('generate');
+  const [selectedTemplate, setSelectedTemplate] = useState('');
   const [recipientPage, setRecipientPage] = useState(1);
   const [recipientQuery, setRecipientQuery] = useState('');
   const recipients = useApi(
     `/recipients?limit=100&page=${recipientPage}&q=${encodeURIComponent(recipientQuery)}`,
   );
   const recipientGroups = useApi('/recipient-groups');
+  const drafts = useApi('/campaigns?status=draft&limit=5');
   const templates = useApi('/templates');
   const accounts = useApi('/smtp/accounts');
-  const selectedAccount = accounts.data?.items.find((account) => account.id === smtp);
+  const selectedAccount = (accounts.data?.items || []).find((account) => account.id === smtp);
   const docs = useApi('/documents?limit=100');
   const existing = useApi(`/campaigns/${editId}`, { enabled: !!editId });
   const form = useForm({
     resolver: zodResolver(schema),
     defaultValues: { name: '', subject: '', body: '', description: '' },
   });
+  const isGroupSelected = (group) => group.recipient_ids.length > 0
+    && group.recipient_ids.every((id) => recipientIds.includes(id));
+  const selectedGroups = (recipientGroups.data?.items || []).filter(isGroupSelected);
+  useEffect(() => {
+    const closeWhenOutside = (event) => {
+      if (groupDropdownRef.current && !groupDropdownRef.current.contains(event.target)) setGroupsOpen(false);
+    };
+    document.addEventListener('pointerdown', closeWhenOutside);
+    return () => document.removeEventListener('pointerdown', closeWhenOutside);
+  }, []);
   const values = form.watch();
   useEffect(() => {
     if (existing.data) {
@@ -110,7 +125,7 @@ export default function Compose() {
     form.setValue('subject', data.subject, { shouldValidate: true });
     form.setValue('body', data.body, { shouldValidate: true });
   }, 'AI draft is ready for your review');
-  const save = useAction(async (data) => {
+  const persistDraft = async (data) => {
     const ids = [...recipientIds];
     for (const recipient of parseManualRecipients(manual)) {
       try {
@@ -135,16 +150,31 @@ export default function Compose() {
       ? await api.put(`/campaigns/${editId}`, payload)
       : await api.post('/emails/compose', payload);
     return result.data;
-  }, 'Draft saved. Review recipients before approval.', {
+  };
+  const save = useAction(persistDraft, 'Draft saved.', {
     invalidatePrefixes: ['/campaigns', '/recipients', '/analytics'],
-    onSuccess: (data) => navigate(`/campaigns/${data.id}`),
+    onSuccess: (data) => navigate(`/compose?edit=${data.id}`),
+  });
+  const send = useAction(async (data) => {
+    const draft = await persistDraft(data);
+    await api.post(`/campaigns/${draft.id}/review`, { revision: draft.revision, confirm: true });
+    await api.post(`/campaigns/${draft.id}/dry-run`);
+    return (await api.post(`/campaigns/${draft.id}/approve`, { revision: draft.revision, confirm: true })).data;
+  }, 'Campaign delivery has started. Live progress is shown below.', {
+    invalidatePrefixes: ['/campaigns', '/analytics', '/recipients', '/emails'],
+    onSuccess: (data) => {
+      setSendOpen(false);
+      navigate(`/campaigns/${data.id}`);
+    },
   });
   return (
     <>
       <PageHeader
-        eyebrow="COMPOSE & CONNECT"
-        title={editId ? 'Refine your campaign' : 'A better email starts here'}
-        description="Make it personal. Let intelligence handle the details."
+        eyebrow="CAMPAIGN"
+        title={editId ? 'Refine your campaign draft' : 'Create a campaign that gets a response'}
+        description="Build, personalize, attach, and safely deliver email to your selected audience."
+        backTo="/campaigns"
+        backLabel="Back to campaigns"
       >
         <Button variant="secondary" onClick={() => setPreview(true)}>
           <Eye size={16} />
@@ -154,24 +184,27 @@ export default function Compose() {
           <Save size={16} />
           Save draft
         </BusyButton>
+        <Button onClick={form.handleSubmit(() => setSendOpen(true))} disabled={save.isPending || send.isPending}>
+          <Send size={16} /> Send campaign
+        </Button>
       </PageHeader>
       <div className="compose-grid">
         <div className="space-y-5">
           <section className="panel">
             <h3 className="mb-5">Campaign details</h3>
             <div className="form-grid">
-              <Field label="Campaign name" error={form.formState.errors.name}>
+              <Field label="Campaign name" required error={form.formState.errors.name}>
                 <input placeholder="e.g. Partnership introductions" {...form.register('name')} />
               </Field>
               <Field label="From email">
-                <select value={smtp} onChange={(e) => setSmtp(e.target.value)}>
-                  <option value="">Choose sender email</option>
-                  {accounts.data?.items.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.from_email} · {a.name}
-                    </option>
-                  ))}
-                </select>
+                <PickerDropdown
+                  value={smtp}
+                  onChange={setSmtp}
+                  placeholder="Choose sender email"
+                  icon={Send}
+                  ariaLabel="Choose sender email"
+                  options={(accounts.data?.items || []).map((account) => ({ value: account.id, label: account.from_email, description: account.name }))}
+                />
                 {selectedAccount && <small>Messages will be sent from {selectedAccount.from_email}</small>}
               </Field>
             </div>
@@ -194,15 +227,21 @@ export default function Compose() {
               />
             </Field>
             <small>For every new contact, full name and email are required. Use Full name &lt;email address&gt;.</small>
-            {!!recipientGroups.data?.items.length && <div className="compose-group-picker">
-              <span>Saved groups</span>
-              <div>{recipientGroups.data.items.map((group) => {
-                const allSelected = group.recipient_ids.every((id) => recipientIds.includes(id));
-                return <Button key={group.id} size="sm" variant={allSelected ? 'default' : 'secondary'} onClick={() => setRecipientIds((current) => allSelected ? current.filter((id) => !group.recipient_ids.includes(id)) : [...new Set([...current, ...group.recipient_ids])])}>
-                  {group.name} <small>{group.recipient_count}</small>
-                </Button>;
-              })}</div>
+            {!!recipientGroups.data?.items.length && <div className="compose-group-dropdown" ref={groupDropdownRef}>
+              <button type="button" className="compose-group-trigger" aria-haspopup="listbox" aria-expanded={groupsOpen} onClick={() => setGroupsOpen((open) => !open)}>
+                <span><UsersRound size={15} /><span>Saved recipient groups</span></span><ChevronDown size={16} className={groupsOpen ? 'open' : ''} />
+              </button>
+              {groupsOpen && <div className="compose-group-menu" role="listbox" aria-label="Saved recipient groups">
+                <div className="compose-group-menu-head"><span>Select a saved audience</span><small>Click again to remove it</small></div>
+                {recipientGroups.data.items.map((group) => {
+                  const allSelected = isGroupSelected(group);
+                  return <button type="button" role="option" aria-selected={allSelected} className={allSelected ? 'selected' : ''} key={group.id} onClick={() => setRecipientIds((current) => allSelected ? current.filter((id) => !group.recipient_ids.includes(id)) : [...new Set([...current, ...group.recipient_ids])])}>
+                    <span className="compose-group-menu-icon"><UsersRound size={15} /></span><span><strong>{group.name}</strong><small>{group.recipient_count} {group.recipient_count === 1 ? 'recipient' : 'recipients'}</small></span>{allSelected && <Check size={16} />}
+                  </button>;
+                })}
+              </div>}
             </div>}
+            {!!selectedGroups.length && <div className="compose-selected-groups" aria-label="Selected recipient groups"><span>Selected groups</span><div>{selectedGroups.map((group) => <button type="button" key={group.id} onClick={() => setRecipientIds((current) => current.filter((id) => !group.recipient_ids.includes(id)))}>{group.name}<X size={13} aria-hidden="true" /></button>)}</div></div>}
             <input
               className="mt-3"
               placeholder="Search saved recipients"
@@ -230,9 +269,7 @@ export default function Compose() {
                     {r.name || r.email}
                     <small>{r.name ? r.email : r.company}</small>
                   </span>
-                  <span className={r.consent ? 'text-emerald-400' : 'text-amber-400'}>
-                    {r.consent ? 'Consented' : 'Needs consent'}
-                  </span>
+                  <span className="text-emerald-400">Available</span>
                 </label>
               ))}
             </div>
@@ -255,10 +292,10 @@ export default function Compose() {
               </Button>
             </div>
             <div className="form-grid mt-4">
-              <Field label="CC (single-recipient campaigns)">
+              <Field label="CC (single-recipient campaign)">
                 <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="Optional" />
               </Field>
-              <Field label="BCC (single-recipient campaigns)">
+              <Field label="BCC (single-recipient campaign)">
                 <input
                   value={bcc}
                   onChange={(e) => setBcc(e.target.value)}
@@ -270,24 +307,22 @@ export default function Compose() {
           <section className="panel">
             <div className="panel-heading">
               <h3>Your message</h3>
-              <select
-                className="template-select"
-                defaultValue=""
-                onChange={(e) => {
-                  const t = templates.data?.items.find((t) => t.id === e.target.value);
+              <PickerDropdown
+                value={selectedTemplate}
+                onChange={(templateId) => {
+                  setSelectedTemplate(templateId);
+                  const t = (templates.data?.items || []).find((t) => t.id === templateId);
                   if (t) {
                     form.setValue('subject', t.subject);
                     form.setValue('body', t.body);
                   }
                 }}
-              >
-                <option value="">Use a template</option>
-                {templates.data?.items.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
+                placeholder="Use a template"
+                icon={FileText}
+                ariaLabel="Choose a message template"
+                className="template-picker"
+                options={(templates.data?.items || []).map((t) => ({ value: t.id, label: t.name, description: t.subject }))}
+              />
             </div>
             <Field label="Subject line" error={form.formState.errors.subject}>
               <input placeholder="A subject worth opening" {...form.register('subject')} />
@@ -300,7 +335,7 @@ export default function Compose() {
             </Field>
             <div className="token-row">
               <span>Personalize with</span>
-              {['name', 'email', 'company', 'position', 'custom_field'].map((t) => (
+              {['name', 'email', 'company', 'position'].map((t) => (
                 <button
                   key={t}
                   onClick={() => form.setValue('body', values.body + `<p>{{${t}}}</p>`)}
@@ -314,22 +349,19 @@ export default function Compose() {
               compact
               onUploaded={(items) => setAttachments((prev) => [...prev, ...items])}
             />
-            <select
-              className="mt-3"
+            <PickerDropdown
+              className="mt-3 workspace-file-picker"
               value=""
-              onChange={(e) => {
-                const item = docs.data?.items.find((d) => d.id === e.target.value);
+              onChange={(documentId) => {
+                const item = docs.data?.items.find((d) => d.id === documentId);
                 if (item && !attachments.find((a) => a.id === item.id))
                   setAttachments([...attachments, item]);
               }}
-            >
-              <option value="">Reuse a private workspace file</option>
-              {docs.data?.items.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.filename}
-                </option>
-              ))}
-            </select>
+              placeholder="Reuse a private workspace file"
+              icon={FileText}
+              ariaLabel="Reuse a private workspace file"
+              options={(docs.data?.items || []).map((document) => ({ value: document.id, label: document.filename, description: 'Private workspace document' }))}
+            />
             {attachments.map((a) => (
               <div className="file-row" key={a.id}>
                 <FileText size={17} />
@@ -355,29 +387,24 @@ export default function Compose() {
             <h3>Your writing copilot</h3>
             <p>Give your message clarity, personality, and purpose.</p>
             <Field label="What would you like to do?">
-              <select value={action} onChange={(e) => setAction(e.target.value)}>
-                {[
-                  ['generate', 'Generate email'],
-                  ['improve', 'Improve writing'],
-                  ['professional', 'Make professional'],
-                  ['shorten', 'Shorten email'],
-                  ['expand', 'Expand email'],
-                  ['grammar', 'Fix grammar'],
-                  ['subject', 'Generate subject'],
-                  ['personalize', 'Personalize email'],
-                ].map(([v, l]) => (
-                  <option key={v} value={v}>
-                    {l}
-                  </option>
-                ))}
-              </select>
+              <PickerDropdown
+                value={action}
+                onChange={setAction}
+                icon={Sparkles}
+                ariaLabel="What would you like to do?"
+                options={[
+                  ['generate', 'Generate email'], ['improve', 'Improve writing'], ['professional', 'Make professional'], ['shorten', 'Shorten email'], ['expand', 'Expand email'], ['grammar', 'Fix grammar'], ['subject', 'Generate subject'], ['personalize', 'Personalize email'],
+                ].map(([value, label]) => ({ value, label }))}
+              />
             </Field>
             <Field label="Tone">
-              <select value={tone} onChange={(e) => setTone(e.target.value)}>
-                {['professional', 'formal', 'friendly', 'business'].map((t) => (
-                  <option key={t}>{t}</option>
-                ))}
-              </select>
+              <PickerDropdown
+                value={tone}
+                onChange={setTone}
+                icon={Sparkles}
+                ariaLabel="Tone"
+                options={['professional', 'formal', 'friendly', 'business'].map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) }))}
+              />
             </Field>
             <Field label="Instructions">
               <textarea
@@ -393,16 +420,25 @@ export default function Compose() {
             </BusyButton>
             <small>AI drafts always need your review.</small>
           </section>
-          <div className="info-card">
-            Save your draft to review recipients, inspect personalized messages, and run a safe
-            delivery test. The selected From email will be used for sending after approval.
-            <ArrowRight size={20} />
-          </div>
+          <section className="panel outreach-drafts">
+            <div className="panel-heading"><div><h3>Recent drafts</h3><p>Continue an unfinished campaign.</p></div></div>
+            {drafts.data?.items.length ? drafts.data.items.map((draft) => <button key={draft.id} className={draft.id === editId ? 'active' : ''} onClick={() => navigate(`/compose?edit=${draft.id}`)}><span><strong>{draft.name}</strong><small>{draft.subject || 'No subject yet'}</small></span><ArrowRight size={15} /></button>) : <small>No saved drafts yet.</small>}
+          </section>
         </aside>
       </div>
       <Dialog open={preview} onOpenChange={setPreview} title="Email preview">
         <EmailPreview subject={values.subject} body={values.body} />
       </Dialog>
+      <ConfirmDialog
+        open={sendOpen}
+        onOpenChange={setSendOpen}
+        title="Send campaign"
+        itemLabel={`${recipientIds.length} selected recipients`}
+        message={<>Your campaign will be sent to the selected recipients. After you continue, you’ll see each email’s live delivery status.</>}
+        confirmLabel="Review and send"
+        processingLabel="Preparing delivery…"
+        onConfirm={() => send.mutateAsync(form.getValues())}
+      />
     </>
   );
 }

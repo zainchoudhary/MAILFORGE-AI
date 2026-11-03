@@ -10,7 +10,6 @@ from app.models.entities import (
     Recipient,
     RecipientGroup,
     GroupMember,
-    Consent,
     Suppression,
     Template,
     Attachment,
@@ -25,9 +24,9 @@ from app.models.entities import (
 from app.schemas.inputs import (
     RecipientInput,
     BulkRecipientDelete,
+    BulkDocumentDelete,
     BulkRecipientImport,
     RecipientGroupInput,
-    ConsentInput,
     TemplateInput,
     SMTPInput,
     SuppressionInput,
@@ -130,23 +129,6 @@ def recipients(
     if q:
         conditions.append(Recipient.email.ilike(f"%{q}%") | Recipient.name.ilike(f"%{q}%"))
     result = page(db, Recipient, user.organization_id, page_number, limit, conditions)
-    # Fetch consent history for the whole page in one query. The previous
-    # per-recipient lookup caused one remote Neon round-trip per row.
-    recipient_ids = [row["id"] for row in result["items"]]
-    latest_consent = {}
-    if recipient_ids:
-        for consent in db.scalars(
-            select(Consent)
-            .where(
-                Consent.organization_id == user.organization_id,
-                Consent.recipient_id.in_(recipient_ids),
-            )
-            .order_by(Consent.created_at.desc())
-        ):
-            latest_consent.setdefault(consent.recipient_id, consent)
-    for row in result["items"]:
-        consent = latest_consent.get(row["id"])
-        row["consent"] = bool(consent and consent.granted)
     return result
 
 
@@ -287,7 +269,7 @@ def update_recipient(
     if item.email != data.email:
         raise HTTPException(
             422,
-            "Create a new recipient to change an address; consent cannot transfer to another address",
+            "Create a new recipient to change an address",
         )
     for key, value in data.model_dump().items():
         setattr(item, key, value)
@@ -331,15 +313,21 @@ def delete_document(identifier: str, user=Depends(editor), db=Depends(get_db)):
     return {"ok": True}
 
 
-@router.post("/recipients/{identifier}/consent", tags=["Recipients"])
-def consent(identifier: str, data: ConsentInput, user=Depends(editor), db=Depends(get_db)):
-    owned(db, Recipient, identifier, user.organization_id)
-    db.add(
-        Consent(organization_id=user.organization_id, recipient_id=identifier, **data.model_dump())
-    )
-    audit(db, user, "recipient.consent", identifier, data.model_dump())
+@router.post("/documents/bulk-delete", tags=["Documents"])
+def bulk_delete_documents(data: BulkDocumentDelete, user=Depends(editor), db=Depends(get_db)):
+    identifiers = list(dict.fromkeys(data.document_ids))
+    documents = [owned(db, Document, identifier, user.organization_id) for identifier in identifiers]
+    paths = [Path(get_settings().storage_path) / document.storage_key for document in documents]
+    document_ids = [document.id for document in documents]
+    db.execute(delete(Attachment).where(Attachment.document_id.in_(document_ids)))
+    db.execute(delete(Extraction).where(Extraction.document_id.in_(document_ids)))
+    for document in documents:
+        db.delete(document)
+        audit(db, user, "document.deleted", document.id)
     db.commit()
-    return {"ok": True}
+    for path in paths:
+        path.unlink(missing_ok=True)
+    return {"ok": True, "deleted": len(documents)}
 
 
 @router.get("/suppressions", tags=["Recipients"])
@@ -508,7 +496,7 @@ def settings(user=Depends(current_user), db=Depends(get_db)):
     return {
         "preferences": prefs.preferences if prefs else {},
         "dry_run": s.dry_run,
-        "max_emails_per_run": s.max_emails_per_run,
+        "campaign_recipient_limit": "unlimited",
         "delay_between_emails": s.delay_between_emails,
         "max_attachment_bytes": s.max_attachment_bytes,
         "ai_provider": s.ai_provider,

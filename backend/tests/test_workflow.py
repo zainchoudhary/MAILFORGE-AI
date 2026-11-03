@@ -7,7 +7,7 @@ from app.core.config import get_settings
 from app.security.auth import encrypt
 
 
-def recipient(client, headers, email="alex@example.com", consent=True):
+def recipient(client, headers, email="alex@example.com"):
     response = client.post(
         "/api/v1/recipients",
         headers=headers,
@@ -15,15 +15,6 @@ def recipient(client, headers, email="alex@example.com", consent=True):
     )
     assert response.status_code == 201, response.text
     record = response.json()
-    if consent:
-        assert (
-            client.post(
-                f"/api/v1/recipients/{record['id']}/consent",
-                headers=headers,
-                json={"granted": True, "source": "Signed opt-in form"},
-            ).status_code
-            == 200
-        )
     return record
 
 
@@ -161,8 +152,13 @@ def test_queue_delivery_idempotency_and_actual_metrics(client, account, db, monk
     assert client.get(url + "/report", headers=account).status_code == 200
 
 
-def test_suppression_and_no_consent_block_approval(client, account, db):
-    r = recipient(client, account, consent=False)
+def test_suppression_blocks_approval(client, account, db):
+    r = recipient(client, account)
+    assert client.post(
+        "/api/v1/suppressions",
+        headers=account,
+        json={"email": r["email"], "reason": "Recipient opted out"},
+    ).status_code == 201
     c = campaign(client, account, [r["id"]])
     preflight(client, account, c)
     enable_smtp(db, c)

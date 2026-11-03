@@ -31,6 +31,22 @@ class Refresh(Input):
     refresh_token: str
 
 
+class ForgotPassword(Input):
+    email: EmailStr
+
+
+class ResetPassword(Input):
+    token: str = Field(min_length=32, max_length=256)
+    password: str = Field(min_length=5, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def strong_password(cls, value):
+        if not all((any(char.isupper() for char in value), any(char.islower() for char in value), any(char.isdigit() for char in value), any(not char.isalnum() for char in value))):
+            raise ValueError("Password must include an uppercase letter, lowercase letter, number, and special character")
+        return value
+
+
 class RecipientInput(Input):
     email: EmailStr
     name: str = Field(min_length=1, max_length=200)
@@ -56,6 +72,10 @@ class BulkRecipientDelete(Input):
     recipient_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
+class BulkDocumentDelete(Input):
+    document_ids: list[str] = Field(min_length=1, max_length=1000)
+
+
 class BulkRecipientImport(Input):
     recipients: list[RecipientInput] = Field(min_length=1, max_length=1000)
 
@@ -71,11 +91,6 @@ class RecipientGroupInput(Input):
         if not value:
             raise ValueError("Group name is required")
         return value
-
-
-class ConsentInput(Input):
-    granted: bool
-    source: str = Field(min_length=3, max_length=2000)
 
 
 class TemplateInput(Input):

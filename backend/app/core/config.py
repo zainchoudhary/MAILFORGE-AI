@@ -19,7 +19,6 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:8080"
     storage_path: str = ".local/uploads"
     dry_run: bool = True
-    max_emails_per_run: int = 20
     delay_between_emails: float = 2
     max_retries: int = 2
     max_attachment_bytes: int = 18000000
@@ -27,6 +26,13 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     smtp_security: str = "starttls"
     smtp_timeout: int = 30
+    # Dedicated Outreach Studio sender for system mail only. Never used for campaigns.
+    system_mail_host: str = ""
+    system_mail_port: int = 587
+    system_mail_security: str = "starttls"
+    system_mail_username: str = ""
+    system_mail_password: str = ""
+    system_mail_from: str = ""
     ai_provider: str = "groq"
     groq_api_key: str = ""
     # Kept configurable: model access differs by Groq account and changes over time.

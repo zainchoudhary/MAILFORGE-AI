@@ -1,7 +1,7 @@
 import logging
 import smtplib
+from collections import defaultdict
 from datetime import timedelta
-import jwt
 from redis import Redis
 from sqlalchemy import select, func
 from app.workers.celery_app import celery
@@ -64,18 +64,25 @@ def dispatch():
             select(Campaign).where(Campaign.status.in_(["processing", "sending"]))
         ):
             finish(db, campaign)
-        ids = db.scalars(
-            select(EmailMessage.id)
+        pending = db.execute(
+            select(EmailMessage.id, EmailMessage.organization_id)
             .join(Campaign)
             .where(
                 Campaign.status.in_(["processing", "sending"]),
                 EmailMessage.status == "queued",
                 (EmailMessage.next_attempt_at.is_(None)) | (EmailMessage.next_attempt_at <= now()),
             )
-            .limit(100)
+            .order_by(EmailMessage.created_at)
         ).all()
-    for identifier in ids:
-        deliver.delay(identifier)
+    # Queue every selected recipient. The per-organization delay protects the
+    # sender without imposing an artificial campaign-size limit.
+    by_organization = defaultdict(list)
+    for identifier, organization_id in pending:
+        by_organization[organization_id].append(identifier)
+    interval = max(0, get_settings().delay_between_emails)
+    for identifiers in by_organization.values():
+        for position, identifier in enumerate(identifiers):
+            deliver.apply_async(args=[identifier], countdown=position * interval)
 
 
 @celery.task
@@ -117,7 +124,7 @@ def deliver(identifier):
             for recipient in recipients
         ):
             msg.status = "cancelled"
-            msg.error = "Recipient consent revoked or address suppressed"
+            msg.error = "Recipient is unavailable or address is suppressed"
             db.commit()
             finish(db, campaign)
             return
@@ -149,14 +156,7 @@ def deliver(identifier):
                 .join(Attachment, Attachment.document_id == Document.id)
                 .where(Attachment.message_id == msg.id)
             ).all()
-            token = jwt.encode(
-                {"type": "unsubscribe", "org": msg.organization_id, "email": msg.recipient_email},
-                s.jwt_secret,
-                algorithm="HS256",
-            )
-            response = send(
-                msg, campaign, account, docs, f"{s.public_url}/api/v1/unsubscribe?token={token}"
-            )
+            response = send(msg, campaign, account, docs)
             msg.status = "smtp_accepted"
             msg.smtp_response = response
             msg.sent_at = now()

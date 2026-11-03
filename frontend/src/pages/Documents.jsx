@@ -1,279 +1,56 @@
 import { useState } from 'react';
 import { FilePreview } from '../components/FilePreview';
-import { Check, Download, FileScan, FileText, Plus, ScanLine, Trash2, Users } from 'lucide-react';
+import { Download, FileText, ListChecks, Paperclip, Trash2 } from 'lucide-react';
 import { useApi, useAction } from '../hooks/useApi';
 import { api, downloadFile } from '../services/api';
-import { importReviewedRecipients, importSummary } from '../services/recipientImport';
-import {
-  PageHeader,
-  QueryState,
-  Empty,
-  Uploader,
-  Status,
-  BusyButton,
-  sizeLabel,
-  Pagination,
-  ConfirmDialog,
-} from '../components/Common';
+import { PageHeader, QueryState, Empty, Uploader, sizeLabel, Pagination, ConfirmDialog } from '../components/Common';
 import { Button } from '../components/ui/button';
+
 export default function Documents() {
   const [previewFile, setPreviewFile] = useState(null);
   const [page, setPage] = useState(1);
-  const docs = useApi(`/documents?page=${page}`);
-  const [selected, setSelected] = useState(null);
-  const extraction = useApi(`/documents/${selected?.id}/recipients`, {
-    enabled: !!selected,
-    refetchInterval: (q) =>
-      ['pending', 'processing'].includes(q.state.data?.status) ? 2000 : false,
-  });
-  const [rows, setRows] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const extract = useAction(async (doc) => {
-    setSelected(doc);
-    setRows(null);
-    const { data } = await api.post(`/documents/${doc.id}/extract`);
-    setRows(data.status === 'completed' ? data.records || [] : null);
-    return data;
-  }, null);
-  const remove = useAction((id) => api.delete(`/documents/${id}`), 'Document deleted');
-  const records = rows ?? extraction.data?.records ?? [];
-  const importAction = useAction(async () => {
-    return importReviewedRecipients(records);
-  }, importSummary, {
-    invalidatePrefixes: ['/recipients', '/analytics'],
-    onSuccess: () => setRows([]),
-  });
-  function edit(index, key, value) {
-    setRows(records.map((r, i) => (i === index ? { ...r, [key]: value } : r)));
-  }
-  return (
-    <>
-      <PageHeader
-        eyebrow="DOCUMENT INTELLIGENCE"
-        title="Your documents have something to say"
-        description="Extract structured contacts. Review the audience. Keep the human in the loop."
-      />
-      <div className="document-top">
-        <Uploader
-          onUploaded={(items) => {
-            if (items.length) setSelected(items[0]);
-          }}
-        />
-        <section className="panel document-note">
-          <FileScan size={28} />
-          <h3>From unstructured to understood</h3>
-          <p>
-            OCR for scanned pages. Structured fields from spreadsheets. Duplicate detection across
-            your workspace.
-          </p>
-          <div className="quiet-note">
-            Found addresses are candidates, never automatically approved recipients.
-          </div>
-        </section>
-      </div>
-      <section className="panel mt-6">
-        <div className="panel-heading">
-          <h3>Private document library</h3>
-          <span className="period-chip">Organization access only</span>
-        </div>
-        <QueryState query={docs}>
-          {(d) => (
-            <>
-              {d.items.length ? (
-                <div className="table-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Document</th>
-                        <th>Size</th>
-                        <th>Malware scan</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {d.items.map((doc) => (
-                        <tr key={doc.id}>
-                          <td>
-                            <button
-                              className="table-title"
-                              onClick={() => {
-                                setSelected(doc);
-                                setRows(null);
-                              }}
-                            >
-                              <FileText size={16} />
-                              {doc.filename}
-                            </button>
-                          </td>
-                          <td>{sizeLabel(doc.size)}</td>
-                          <td>
-                            <Status value={doc.scan_status} />
-                          </td>
-                          <td>
-                            <div className="flex gap-2">
-                              <BusyButton
-                                size="sm"
-                                busy={extract.isPending}
-                                onClick={() => extract.mutate(doc)}
-                              >
-                                <ScanLine size={14} />
-                                Extract
-                              </BusyButton>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                aria-label={`Download ${doc.filename}`}
-                                onClick={() =>
-                                  downloadFile(`/documents/${doc.id}/download`, doc.filename)
-                                }
-                              >
-                                <Download size={15} />
-                              </Button>
-                              <Button size="sm" variant="ghost" onClick={() => setPreviewFile(doc)}>
-                                Preview
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => {
-                                  setDeleteTarget(doc);
-                                }}
-                              >
-                                Delete
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <Empty
-                  title="Bring your first document"
-                  description="Your files stay private to your organization."
-                />
-              )}
-              <Pagination data={d} page={page} setPage={setPage} />
-            </>
-          )}
-        </QueryState>
-      </section>
-      {selected && (
-        <section className="panel mt-6">
-          <div className="panel-heading">
-            <div>
-              <h3>Review extracted recipients</h3>
-              <p>
-                {selected.filename} · {extraction.data?.duplicates || 0} duplicate occurrences
-                removed
-              </p>
-            </div>
-            <Status value={extraction.data?.status || 'not_started'} />
-          </div>
-          {extraction.data?.error && <div className="error-panel">{extraction.data.error}</div>}
-          {records.length ? (
-            <div className="table-scroll">
-                <div className="flex justify-between items-center mb-3">
-                  <small>{records.filter((r) => r.selected !== false).length} of {records.length} selected</small>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      const selectAll = records.some((r) => r.selected === false);
-                      setRows(records.map((r) => ({ ...r, selected: selectAll })));
-                    }}
-                  >
-                    {records.some((r) => r.selected === false) ? 'Select all' : 'Deselect all'}
-                  </Button>
-                </div>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Select</th>
-                    <th>Email address</th>
-                    <th>Name</th>
-                    <th>Company</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {records.map((r, i) => (
-                    <tr key={i}>
-                      <td>
-                        <input
-                          aria-label={`Select ${r.email}`}
-                          type="checkbox"
-                          checked={r.selected !== false}
-                          onChange={(e) => edit(i, 'selected', e.target.checked)}
-                        />
-                      </td>
-                      {['email', 'name', 'company'].map((key) => (
-                        <td key={key}>
-                          <input
-                            aria-label={`${key} row ${i + 1}`}
-                            value={r[key]}
-                            onChange={(e) => edit(i, key, e.target.value)}
-                          />
-                        </td>
-                      ))}
-                      <td>
-                        <button
-                          aria-label={`Remove ${r.email}`}
-                          onClick={() => setRows(records.filter((_, n) => n !== i))}
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <Empty
-              title={
-                extraction.data?.status === 'completed'
-                  ? 'No candidates found'
-                  : 'Extract this document to review candidates'
-              }
-              description="You can also add recipient records manually."
-            />
-          )}
-          <div className="flex justify-between mt-5 gap-3">
-            <Button
-              variant="secondary"
-              onClick={() =>
-                setRows([
-                  ...records,
-                  { email: '', name: '', company: '', position: '', custom_fields: {} },
-                ])
-              }
-            >
-              <Plus size={15} />
-              Add row
-            </Button>
-            <BusyButton
-              busy={importAction.isPending}
-              disabled={!records.some((r) => r.selected !== false)}
-              onClick={() => importAction.mutate()}
-            >
-              <Check size={15} />
-              Save reviewed recipients
-            </BusyButton>
-          </div>
-        </section>
-      )}
-      <FilePreview document={previewFile} onClose={() => setPreviewFile(null)} />
-      <ConfirmDialog
-        open={!!deleteTarget}
-        itemLabel={deleteTarget?.filename}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-        onConfirm={async () => {
-          await remove.mutateAsync(deleteTarget.id);
-          if (selected?.id === deleteTarget.id) setSelected(null);
-        }}
-      />
-    </>
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
+  const docs = useApi(`/documents?page=${page}`);
+  const remove = useAction((id) => api.delete(`/documents/${id}`), 'Attachment deleted');
+  const removeSelected = useAction(
+    async (ids) => (await api.post('/documents/bulk-delete', { document_ids: ids })).data,
+    (data) => `${data.deleted} attachments deleted`,
+    { invalidatePrefixes: ['/documents'], onSuccess: () => { setSelectedDocumentIds([]); setSelectionMode(false); } },
   );
+  return <>
+    <PageHeader eyebrow="ATTACHMENT LIBRARY" title="Files, ready for your campaigns" description="Upload once, preview anytime, and attach private files to campaigns or templates." />
+    <div className="document-top">
+      <Uploader onUploaded={() => {}} />
+      <section className="panel document-note"><Paperclip size={27} /><h3>Your private file library</h3><p>Files uploaded here are available only as attachments in your Outreach Studio workspace.</p><div className="quiet-note">Preview, download, attach, or remove files whenever you need.</div></section>
+    </div>
+    <section className="panel mt-6">
+      <div className="panel-heading"><div><h3>Saved attachments</h3><p>Private to your organization and ready to reuse.</p></div><span className="period-chip">Attachment-only</span></div>
+      <QueryState query={docs}>{(data) => <>
+        {data.items.length ? <>
+          <div className="document-library-actions">
+            <small>{selectionMode ? `${selectedDocumentIds.length} selected` : 'Select files when you need to manage more than one.'}</small>
+            <div>
+              <Button variant={selectionMode ? 'default' : 'secondary'} size="sm" onClick={() => { setSelectionMode((active) => !active); if (selectionMode) setSelectedDocumentIds([]); }}><ListChecks size={14} /> {selectionMode ? 'Done selecting' : 'Select multiple'}</Button>
+              {selectionMode && <Button variant="secondary" size="sm" onClick={() => { const pageIds = data.items.map((document) => document.id); const allSelected = pageIds.length > 0 && pageIds.every((id) => selectedDocumentIds.includes(id)); setSelectedDocumentIds(allSelected ? selectedDocumentIds.filter((id) => !pageIds.includes(id)) : [...new Set([...selectedDocumentIds, ...pageIds])]); }}>{data.items.every((document) => selectedDocumentIds.includes(document.id)) ? 'Deselect all' : 'Select all'}</Button>}
+              {selectionMode && selectedDocumentIds.length > 0 && <Button variant="destructive" size="sm" onClick={() => setBulkDeleteOpen(true)}><Trash2 size={14} /> Delete {selectedDocumentIds.length} selected</Button>}
+            </div>
+          </div>
+          <div className="table-scroll"><table><thead><tr>{selectionMode && <th className="table-check" aria-label="Selection" />}<th>Attachment</th><th>Size</th><th>Actions</th></tr></thead><tbody>
+            {data.items.map((document) => <tr key={document.id}>
+              {selectionMode && <td className="table-check"><input aria-label={`Select ${document.filename}`} type="checkbox" checked={selectedDocumentIds.includes(document.id)} onChange={(event) => setSelectedDocumentIds((current) => event.target.checked ? [...new Set([...current, document.id])] : current.filter((id) => id !== document.id))} /></td>}
+              <td><button className="table-title" onClick={() => setPreviewFile(document)}><FileText size={16} />{document.filename}</button></td><td>{sizeLabel(document.size)}</td>
+              <td><div className="flex gap-2"><Button size="icon" variant="ghost" aria-label={`Download ${document.filename}`} onClick={() => downloadFile(`/documents/${document.id}/download`, document.filename)}><Download size={15} /></Button><Button size="sm" variant="ghost" onClick={() => setPreviewFile(document)}>Preview</Button><Button size="sm" variant="ghost" onClick={() => setDeleteTarget(document)}>Delete</Button></div></td>
+            </tr>)}
+          </tbody></table></div>
+        </> : <Empty title="Upload your first attachment" description="Files here can be attached to campaigns and templates." />}
+        <Pagination data={data} page={page} setPage={setPage} />
+      </>}</QueryState>
+    </section>
+    <FilePreview document={previewFile} onClose={() => setPreviewFile(null)} />
+    <ConfirmDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen} title="Delete selected attachments" message={`This will permanently delete ${selectedDocumentIds.length} selected attachment${selectedDocumentIds.length === 1 ? '' : 's'}.`} confirmLabel="Delete selected" onConfirm={() => removeSelected.mutateAsync(selectedDocumentIds)} />
+    <ConfirmDialog open={!!deleteTarget} itemLabel={deleteTarget?.filename} onOpenChange={(open) => !open && setDeleteTarget(null)} confirmLabel="Delete permanently" onConfirm={() => remove.mutateAsync(deleteTarget.id)} />
+  </>;
 }

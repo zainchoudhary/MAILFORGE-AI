@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { Layers, Plus, Trash2 } from 'lucide-react';
 import { useApi, useAction } from '../hooks/useApi';
 import { api } from '../services/api';
-import { PageHeader, QueryState, Empty, Field, BusyButton, ConfirmDialog } from '../components/Common';
+import { PageHeader, QueryState, Empty, Field, BusyButton, ConfirmDialog, PickerDropdown } from '../components/Common';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 import { RichEditor } from '../components/RichEditor';
@@ -60,24 +60,18 @@ export default function Templates() {
             <div className="card-grid">
               {d.items.map((t) => (
                 <div className="panel template-card" key={t.id}>
-                  <button onClick={() => show(t)}>
-                  <div className="template-icon">
-                    <Layers size={22} />
-                  </div>
-                  <h3>{t.name}</h3>
-                  <p>{t.subject}</p>
-                  <small>Edit template →</small>
+                  <button className="template-card-main" onClick={() => show(t)}>
+                    <div className="template-icon">
+                      <Layers size={22} />
+                    </div>
+                    <h3>{t.name}</h3>
+                    <p>{t.subject}</p>
+                    <small>Edit template <span>→</span></small>
                   </button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setDeleteTarget(t);
-                    }}
-                  >
-                    <Trash2 size={14} /> Delete
-                  </Button>
+                  <div className="template-card-footer">
+                    <span>Reusable message</span>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setDeleteTarget(t)}><Trash2 size={14} /> Delete</Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -108,14 +102,16 @@ export default function Templates() {
             <RichEditor value={form.watch('body')} onChange={(v) => form.setValue('body', v)} />
           </Field>
           <Field label="Associate a private attachment">
-            <select value={attachment} onChange={(e) => setAttachment(e.target.value)}>
-              <option value="">No additional attachment</option>
-              {docs.data?.items.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.filename}
-                </option>
-              ))}
-            </select>
+            <PickerDropdown
+              value={attachment}
+              onChange={setAttachment}
+              placeholder="Reuse a private workspace file"
+              ariaLabel="Choose a private workspace file"
+              options={[
+                { value: '', label: 'No additional attachment', description: 'Send this template without a file' },
+                ...(docs.data?.items || []).map((document) => ({ value: document.id, label: document.filename, description: 'Private workspace document' })),
+              ]}
+            />
           </Field>
           {linked.data?.items.map((d) => (
             <div className="file-row" key={d.id}>

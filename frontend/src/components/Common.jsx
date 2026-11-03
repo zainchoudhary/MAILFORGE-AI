@@ -1,14 +1,16 @@
-import { useState } from 'react';
-import { Inbox, Loader2, AlertCircle, ArrowRight, UploadCloud, ShieldAlert, LogOut, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Inbox, Loader2, AlertCircle, ArrowRight, ArrowLeft, UploadCloud, ShieldAlert, LogOut, Trash2, Check, ChevronDown } from 'lucide-react';
 import { Button } from './ui/button';
 import { useAction } from '../hooks/useApi';
 import { api } from '../services/api';
 import { Dialog } from './ui/dialog';
-export function PageHeader({ eyebrow = 'WORKSPACE', title, description, children }) {
+import { toast } from 'sonner';
+export function PageHeader({ eyebrow = 'WORKSPACE', title, description, children, backTo, backLabel = 'Back' }) {
   return (
     <div className="page-heading">
       <div>
-        <div className="eyebrow">{eyebrow}</div>
+        <div className="page-heading-eyebrow-row">{backTo && <Link to={backTo} className="page-back-button" aria-label={backLabel} title={backLabel}><ArrowLeft size={17} /></Link>}<div className="eyebrow">{eyebrow}</div></div>
         <h1>{title}</h1>
         <p>{description}</p>
       </div>
@@ -57,7 +59,15 @@ export function QueryState({ query, children }) {
         <Button onClick={() => query.refetch()}>Try again</Button>
       </div>
     );
-  return children(query.data);
+  // Paginated API responses are normalized at the UI boundary. A temporarily
+  // incomplete response during reload must produce an empty state, never a
+  // route-level render crash from `items.map` / `items.length`.
+  const path = String(query.queryKey?.[0] || '');
+  const paginated = path.includes('?') && /\/(campaigns|documents|recipients|emails|templates|recipient-groups)/.test(path);
+  const data = paginated
+    ? { ...(query.data || {}), items: Array.isArray(query.data?.items) ? query.data.items : [], total: Number(query.data?.total) || 0, limit: Number(query.data?.limit) || 25 }
+    : query.data;
+  return children(data);
 }
 export function Status({ value }) {
   return (
@@ -118,6 +128,30 @@ export function Field({ label, error, required = false, children }) {
     </label>
   );
 }
+export function PickerDropdown({ value, onChange, options, placeholder, icon: Icon, ariaLabel, className = '' }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef(null);
+  const selected = options.find((option) => option.value === value);
+  useEffect(() => {
+    const closeOutside = (event) => {
+      if (root.current && !root.current.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    return () => document.removeEventListener('pointerdown', closeOutside);
+  }, []);
+  return (
+    <div className={`picker-dropdown ${className}`.trim()} ref={root}>
+      <button type="button" className="picker-dropdown-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel || placeholder} onClick={() => setOpen((current) => !current)} onKeyDown={(event) => { if (event.key === 'Escape') setOpen(false); }}>
+        <span>{Icon && <Icon size={15} />}<span>{selected?.label || placeholder}</span></span><ChevronDown size={16} className={open ? 'open' : ''} />
+      </button>
+      {open && <div className="picker-dropdown-menu" role="listbox" aria-label={ariaLabel || placeholder}>
+        {options.map((option) => <button type="button" role="option" aria-selected={option.value === value} className={option.value === value ? 'selected' : ''} key={option.value} onClick={() => { onChange(option.value); setOpen(false); }}>
+          <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>{option.value === value && <Check size={16} />}
+        </button>)}
+      </div>}
+    </div>
+  );
+}
 export function Pagination({ data, page, setPage }) {
   return (
     <div className="pagination">
@@ -137,7 +171,7 @@ export function Pagination({ data, page, setPage }) {
     </div>
   );
 }
-export function Uploader({ onUploaded, onBusyChange, multiple = true, compact = false }) {
+export function Uploader({ onUploaded, onBusyChange, multiple = true, compact = false, accept = '.pdf,.docx,.doc,.xlsx,.xls,.csv,.xml,.txt,.json,.png,.jpg,.jpeg', allowedExtensions, description, label = 'Choose documents to upload' }) {
   const upload = useAction(async (files) => {
     const docs = [];
     for (const file of files) {
@@ -156,19 +190,23 @@ export function Uploader({ onUploaded, onBusyChange, multiple = true, compact = 
       <input
         type="file"
         multiple={multiple}
-        accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.xml,.txt,.json,.png,.jpg,.jpeg"
+        accept={accept}
         disabled={upload.isPending}
         onChange={(e) => {
-          if (e.target.files.length) {
+          const files = [...e.target.files];
+          const invalid = allowedExtensions && files.find((file) => !allowedExtensions.includes(`.${file.name.split('.').pop()?.toLowerCase()}`));
+          if (invalid) {
+            toast.error('Only Excel files (.xlsx or .xls) can be imported into recipients.');
+          } else if (files.length) {
             onBusyChange?.(true);
-            upload.mutate([...e.target.files]);
+            upload.mutate(files);
           }
           e.target.value = '';
         }}
       />
       <UploadCloud size={compact ? 22 : 32} />
-      <strong>{upload.isPending ? 'Uploading…' : 'Choose documents to upload'}</strong>
-      <span>PDF, Office, spreadsheets, text & images · up to 18 MB per file</span>
+      <strong>{upload.isPending ? 'Uploading…' : label}</strong>
+      <span>{description || 'PDF, Office, spreadsheets, text & images · up to 18 MB per file'}</span>
     </label>
   );
 }

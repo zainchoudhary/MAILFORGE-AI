@@ -28,7 +28,7 @@ def test_real_smtp_transport_keeps_bcc_out_of_headers():
         )
         campaign = SimpleNamespace(cc=["cc@example.com"], bcc=["secret@example.com"])
         account = SimpleNamespace(from_email="sender@example.com")
-        mail = build_message(message, campaign, account, [], "https://example.com/unsubscribe")
+        mail = build_message(message, campaign, account, [])
         with smtplib.SMTP("127.0.0.1", 58025) as client:
             rejected = client.send_message(
                 mail, to_addrs=[message.recipient_email, *campaign.cc, *campaign.bcc]
@@ -36,7 +36,7 @@ def test_real_smtp_transport_keeps_bcc_out_of_headers():
         assert rejected == {}
         parsed = BytesParser(policy=policy.default).parsebytes(handler.messages[0])
         assert parsed["Bcc"] is None
-        assert parsed["List-Unsubscribe"]
+        assert parsed["List-Unsubscribe"] is None
         assert parsed["Message-ID"] == "<test-message@mailforge.local>"
     finally:
         controller.stop()

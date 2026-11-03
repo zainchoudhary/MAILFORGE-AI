@@ -164,8 +164,6 @@ def execute(db, org, task, payload):
             current = context["campaign"]
             context["delivery_plan"] = {
                 "recipient_count": len(current["recipients"]),
-                "batch_count": (len(current["recipients"]) + get_settings().max_emails_per_run - 1)
-                // get_settings().max_emails_per_run,
                 "minimum_duration_seconds": max(0, len(current["recipients"]) - 1)
                 * get_settings().delay_between_emails,
             }
@@ -188,7 +186,7 @@ def execute(db, org, task, payload):
         return {
             **result.model_dump(),
             "approval_required": True,
-            "max_batch_size": get_settings().max_emails_per_run,
+            "campaign_recipient_limit": "unlimited",
             "interval_seconds": get_settings().delay_between_emails,
         }
 

@@ -39,7 +39,7 @@ export default function Analytics() {
           <div className="stat-grid analytics-stats">
             {[
               ['Processed', m.processed],
-              ['SMTP accepted', m.smtp_accepted],
+              ['Emails sent', m.smtp_accepted],
               ['Confirmed deliveries', m.confirmed_deliveries],
               ['Failed', m.failed],
               ['Bounced', m.bounced],

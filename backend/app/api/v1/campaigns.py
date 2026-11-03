@@ -114,7 +114,7 @@ def dry_run(identifier: str, user=Depends(editor), db=Depends(get_db)):
         "sent": 0,
         "revision": item.revision,
         "items": previews,
-        "warnings": ["Some recipients lack consent or are suppressed"]
+        "warnings": ["Some recipients are suppressed or unavailable"]
         if any(not p["eligible"] for p in previews)
         else [],
     }
@@ -122,9 +122,13 @@ def dry_run(identifier: str, user=Depends(editor), db=Depends(get_db)):
 
 @router.post("/campaigns/{identifier}/approve")
 def approve(identifier: str, data: Approval, user=Depends(editor), db=Depends(get_db)):
-    return serialize(
-        service.approve(db, user, owned(db, Campaign, identifier, user.organization_id), data)
-    )
+    campaign = service.approve(db, user, owned(db, Campaign, identifier, user.organization_id), data)
+    # Trigger delivery immediately. Celery Beat remains a recovery mechanism,
+    # but an approved campaign must not wait for a separate scheduler process.
+    from app.workers.tasks import dispatch
+
+    dispatch.delay()
+    return serialize(campaign)
 
 
 @router.post("/campaigns/{identifier}/duplicate", status_code=201)
@@ -312,7 +316,7 @@ def email_detail(identifier: str, user=Depends(current_user), db=Depends(get_db)
 
 @router.post("/emails/send-test", tags=["Email Activity"])
 def test_email(data: TestEmail, user=Depends(editor), db=Depends(get_db)):
-    from app.models.entities import Recipient, Consent
+    from app.models.entities import Recipient
 
     source = owned(db, Campaign, data.campaign_id, user.organization_id)
     if str(data.recipient).lower() != user.email:
@@ -328,15 +332,6 @@ def test_email(data: TestEmail, user=Depends(editor), db=Depends(get_db)):
         )
         db.add(recipient)
         db.flush()
-    db.add(
-        Consent(
-            organization_id=user.organization_id,
-            recipient_id=recipient.id,
-            granted=True,
-            source="Explicit send-test request by account owner",
-        )
-    )
-    db.flush()
     test = service.save(
         db,
         user,

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Navigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { Mail, ShieldCheck, Sparkles, ArrowRight, Eye, EyeOff, UserRound, Building2, LockKeyhole, Check } from 'lucide-react';
 import { api } from '../services/api';
 import { useAction } from '../hooks/useApi';
@@ -104,6 +104,7 @@ export default function Login() {
             <Field label="Password" required error={form.formState.errors.password}>
               <div className="auth-input-wrap"><LockKeyhole aria-hidden="true" /><input type={showPassword ? 'text' : 'password'} placeholder={register ? '5+ characters, e.g. Studio1!' : 'Enter your password'} {...form.register('password')} autoComplete={register ? 'new-password' : 'current-password'} aria-invalid={!!form.formState.errors.password} /><button type="button" className="password-toggle" onClick={() => setShowPassword((shown) => !shown)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
             </Field>
+            {!register && <Link className="forgot-password-link" to="/forgot-password">Forgot password?</Link>}
             {register && <div className="password-strength" aria-label={`Password requirements complete: ${strength} of 5`}><div className={`password-strength-bars strength-${strength}`}><i /><i /><i /></div><span>{password ? ['Use 5+ characters, uppercase, lowercase, number, and special character', 'Add uppercase, number, and special character', 'Add a number and special character', 'Add a special character', 'Almost there — add any missing requirement', 'Password meets all requirements'][strength] : 'Use 5+ characters, uppercase, lowercase, number, and special character'}</span></div>}
             <BusyButton busy={action.isPending} className="auth-submit w-full" type="submit">
               {action.isPending ? (register ? 'Creating workspace…' : 'Signing in…') : (register ? 'Create workspace' : 'Sign in securely')}

@@ -1,4 +1,4 @@
-import { Suspense, useState, useEffect, useRef } from 'react';
+import { Component, Suspense, useState, useEffect } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
   Activity,
@@ -9,7 +9,6 @@ import {
   ChevronDown,
   CircleHelp,
   FileScan,
-  FolderKanban,
   Layers,
   LayoutDashboard,
   LogOut,
@@ -31,7 +30,7 @@ import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { useApi } from '../hooks/useApi';
 import { api, session } from '../services/api';
-import { useIsFetching, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { ConfirmDialog } from '../components/Common';
 import { Brand, OutreachMark } from '../components/Brand';
 const groups = [
@@ -40,7 +39,7 @@ const groups = [
     [
       ['Overview', '/', LayoutDashboard],
       ['AI Agent Studio', '/studio', Bot],
-      ['Compose email', '/compose', Mail],
+      ['Campaign', '/campaigns', Mail],
       ['Recipients', '/recipients', Users],
       ['Recipient groups', '/recipient-groups', UserRoundPlus],
     ],
@@ -48,9 +47,8 @@ const groups = [
   [
     'EMAIL OPERATIONS',
     [
-      ['Campaigns', '/campaigns', FolderKanban],
       ['Email activity', '/activity', Activity],
-      ['Document intelligence', '/documents', FileScan],
+      ['Attachments', '/documents', FileScan],
       ['Templates', '/templates', Layers],
       ['Analytics', '/analytics', BarChart3],
       ['Automation', '/automation', Zap],
@@ -73,29 +71,6 @@ export default function Workspace() {
   const { logout } = useAuth();
   const location = useLocation();
   const client = useQueryClient();
-  const initialLoading = useIsFetching({
-    predicate: (query) => query.getObserversCount() > 0 && query.state.data === undefined && !query.state.error,
-  });
-  const [readyRoute, setReadyRoute] = useState(null);
-  const [moduleLoading, setModuleLoading] = useState(false);
-  const loadedRoutes = useRef(new Map());
-  const routeIdentity = location.pathname + location.search;
-  const cachedKeys = loadedRoutes.current.get(routeIdentity);
-  const hasCachedPage = cachedKeys !== undefined && cachedKeys.every(
-    (key) => client.getQueryData(key) !== undefined,
-  );
-  const pageLoading = readyRoute !== location.key && !hasCachedPage;
-  useEffect(() => {
-    if (readyRoute === location.key || initialLoading || moduleLoading) return;
-    // Allow mounted child panels to register dependent requests before reveal.
-    const timer = setTimeout(() => {
-      loadedRoutes.current.set(routeIdentity, client.getQueryCache().getAll()
-        .filter((query) => query.getObserversCount() > 0 && query.state.data !== undefined)
-        .map((query) => query.queryKey));
-      setReadyRoute(location.key);
-    }, hasCachedPage ? 0 : 250);
-    return () => clearTimeout(timer);
-  }, [initialLoading, moduleLoading, location.key, readyRoute, routeIdentity, client, hasCachedPage]);
   const me = useApi('/auth/me');
   const settings = useApi('/settings');
   useEffect(() => {
@@ -177,7 +152,7 @@ export default function Workspace() {
                   aria-label={title}
                   to={url}
                   end={url === '/'}
-                  className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                  className={({ isActive }) => `nav-link ${isActive || (url === '/campaigns' && location.pathname === '/compose') ? 'active' : ''}`}
                 >
                   <Icon size={17} />
                   <span>{title}</span>
@@ -232,31 +207,18 @@ export default function Workspace() {
               <Menu />
             </button>
         </div>
-        <div className="route-content" aria-busy={pageLoading}>
-        {pageLoading && (
-          <div className="route-skeleton" aria-label="Loading page content">
-            <div className="route-skeleton-heading">
-              <div className="skeleton route-skeleton-eyebrow" />
-              <div className="skeleton route-skeleton-title" />
-              <div className="skeleton route-skeleton-subtitle" />
-            </div>
-            <div className="route-skeleton-cards">
-              <div className="skeleton" /><div className="skeleton" /><div className="skeleton" />
-            </div>
-            <div className="skeleton route-skeleton-panel" />
-          </div>
-        )}
+        <div className="route-content">
         <motion.main
-          style={pageLoading ? { visibility: 'hidden', pointerEvents: 'none', height: 0, overflow: 'hidden' } : undefined}
-          aria-hidden={pageLoading}
           key={location.pathname}
-          initial={hasCachedPage ? false : { opacity: 0, y: 6 }}
+          initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.22 }}
         >
-          <Suspense fallback={<ModulePending setPending={setModuleLoading} />}>
-            <Outlet />
-          </Suspense>
+          <RouteErrorBoundary key={location.pathname}>
+            <Suspense fallback={<RouteSkeleton />}>
+              <Outlet />
+            </Suspense>
+          </RouteErrorBoundary>
         </motion.main>
         </div>
         <footer>
@@ -268,10 +230,41 @@ export default function Workspace() {
   );
 }
 
-function ModulePending({ setPending }) {
-  useEffect(() => {
-    setPending(true);
-    return () => setPending(false);
-  }, [setPending]);
-  return null;
+function RouteSkeleton() {
+  return <div className="route-skeleton" aria-label="Loading page content">
+    <div className="route-skeleton-heading">
+      <div className="skeleton route-skeleton-eyebrow" />
+      <div className="skeleton route-skeleton-title" />
+      <div className="skeleton route-skeleton-subtitle" />
+    </div>
+    <div className="route-skeleton-cards">
+      <div className="skeleton" /><div className="skeleton" /><div className="skeleton" />
+    </div>
+    <div className="skeleton route-skeleton-panel" />
+  </div>;
+}
+
+class RouteErrorBoundary extends Component {
+  state = { failed: false, retryCount: 0 };
+  static getDerivedStateFromError(error) {
+    return { failed: true };
+  }
+  componentDidCatch(error) {
+    console.error('Route render failed', error);
+    // Route modules can briefly fail while a reload/HMR update swaps chunks.
+    // Remount twice before surfacing recovery UI; users should never have to
+    // manually recover from that transient rendering state.
+    if (this.state.retryCount < 2) {
+      window.setTimeout(() => this.setState((current) => ({ failed: false, retryCount: current.retryCount + 1 })), 0);
+    }
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return <section className="route-recovery" role="alert">
+      <div className="route-recovery-mark"><Sparkles size={21} /></div>
+      <h2>We couldn’t open this page</h2>
+      <p>Your workspace is still safe. Try loading this page again.</p>
+      <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>Reload page</button>
+    </section>;
+  }
 }

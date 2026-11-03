@@ -1,16 +1,40 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { lazy, Suspense } from 'react';
-import { Loading } from './components/Common';
+import { Sparkles } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
+import { session } from './services/api';
 import Workspace from './layouts/Workspace';
 import Login from './pages/Login';
+import { ForgotPassword, ResetPassword } from './pages/PasswordReset';
+// A deployed Vite build can briefly serve an old HTML shell after a new route
+// chunk is published. Retry that lazy import once with a fresh page instead of
+// showing a route error on direct reloads such as /campaigns or /documents.
+function lazyPage(loader, key) {
+  return lazy(async () => {
+    try {
+      const module = await loader();
+      sessionStorage.removeItem(`mf_lazy_retry_${key}`);
+      return module;
+    } catch (error) {
+      const retryKey = `mf_lazy_retry_${key}`;
+      if (!sessionStorage.getItem(retryKey)) {
+        sessionStorage.setItem(retryKey, '1');
+        window.location.reload();
+        return new Promise(() => {});
+      }
+      sessionStorage.removeItem(retryKey);
+      throw error;
+    }
+  });
+}
 const Overview = lazy(() => import('./pages/Overview'));
 const Compose = lazy(() => import('./pages/Compose'));
-const Campaigns = lazy(() => import('./pages/Campaigns'));
-const CampaignDetail = lazy(() =>
+const Campaigns = lazyPage(() => import('./pages/Campaigns'), 'campaigns');
+const CampaignDetail = lazyPage(() =>
   import('./pages/Campaigns').then((m) => ({ default: m.CampaignDetail })),
+  'campaign-detail',
 );
-const Documents = lazy(() => import('./pages/Documents'));
+const Documents = lazyPage(() => import('./pages/Documents'), 'documents');
 const Recipients = lazy(() => import('./pages/Recipients'));
 const RecipientGroups = lazy(() => import('./pages/RecipientGroups'));
 const Activity = lazy(() => import('./pages/Activity'));
@@ -22,14 +46,26 @@ const Studio = lazy(() => import('./pages/Studio'));
 const Analytics = lazy(() => import('./pages/Analytics'));
 import { SMTP, Settings, Integrations, Audit, Automation } from './pages/Configuration';
 function Guard() {
-  const { authenticated } = useAuth();
+  const { authenticated, initializing } = useAuth();
+  // Keep the application shell visible while a saved session is silently restored.
+  // The dashboard itself owns its content loader, so navigation never disappears.
+  if (initializing) return session.refresh() ? <Workspace /> : null;
   return authenticated ? <Workspace /> : <Navigate to="/login" replace />;
+}
+function WorkspaceBoot() {
+  return <div className="dashboard-boot" role="status" aria-live="polite">
+    <div className="dashboard-boot-mark"><Sparkles size={25} /><i /><i /><i /></div>
+    <strong>Building your command center</strong>
+    <span>Your workspace is loading securely.</span>
+  </div>;
 }
 export default function App() {
   return (
-    <Suspense fallback={<Loading />}>
+    <Suspense fallback={<WorkspaceBoot />}>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route element={<Guard />}>
           <Route index element={<Overview />} />
           <Route path="studio" element={<Studio />} />

@@ -33,7 +33,7 @@ def connect(account):
     return client
 
 
-def build_message(message, campaign, account, documents, unsubscribe_url):
+def build_message(message, campaign, account, documents):
     import bleach
 
     mail = EmailMessage()
@@ -43,9 +43,7 @@ def build_message(message, campaign, account, documents, unsubscribe_url):
     if campaign.cc:
         mail["Cc"] = ", ".join(campaign.cc)
     mail["Message-ID"] = f"<{message.id}@mailforge.local>"
-    mail["List-Unsubscribe"] = f"<{unsubscribe_url}>"
-    mail["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
-    body = message.body + f'<p><a href="{unsubscribe_url}">Unsubscribe</a></p>'
+    body = message.body
     mail.set_content(bleach.clean(body, tags=[], strip=True))
     mail.add_alternative(body, subtype="html")
     for doc in documents:
@@ -59,8 +57,8 @@ def build_message(message, campaign, account, documents, unsubscribe_url):
     return mail
 
 
-def send(message, campaign, account, documents, unsubscribe_url):
-    mail = build_message(message, campaign, account, documents, unsubscribe_url)
+def send(message, campaign, account, documents):
+    mail = build_message(message, campaign, account, documents)
     with connect(account) as client:
         rejected = client.send_message(
             mail, to_addrs=[message.recipient_email, *campaign.cc, *campaign.bcc]

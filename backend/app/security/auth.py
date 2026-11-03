@@ -22,7 +22,7 @@ def decrypt(value):
     return Fernet(get_settings().encryption_key.encode()).decrypt(value.encode()).decode()
 
 
-def tokens(db, user):
+def tokens(db, user, refresh_token: str | None = None):
     settings = get_settings()
     access = jwt.encode(
         {
@@ -34,16 +34,20 @@ def tokens(db, user):
         settings.jwt_secret,
         algorithm="HS256",
     )
-    refresh = secrets.token_urlsafe(48)
-    db.add(
-        RefreshSession(
-            organization_id=user.organization_id,
-            user_id=user.id,
-            token_hash=hashlib.sha256(refresh.encode()).hexdigest(),
-            expires_at=now() + timedelta(days=7),
+    refresh = refresh_token or secrets.token_urlsafe(48)
+    # Keep a valid refresh session stable across page reloads. Rotating it on every
+    # refresh creates a race: a browser reload can cancel the response after the
+    # server revokes the old token, leaving the client with an unusable session.
+    if refresh_token is None:
+        db.add(
+            RefreshSession(
+                organization_id=user.organization_id,
+                user_id=user.id,
+                token_hash=hashlib.sha256(refresh.encode()).hexdigest(),
+                expires_at=now() + timedelta(days=7),
+            )
         )
-    )
-    db.commit()
+        db.commit()
     return {"access_token": access, "refresh_token": refresh, "token_type": "bearer"}
 
 

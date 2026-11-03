@@ -15,8 +15,12 @@ def personalize(text, recipient, escape=False):
 
     def replace(match):
         key = match.group(1)
-        if key not in values:
-            raise ValueError(f"Missing personalization field: {key}")
+        if key not in values or values[key] in (None, ""):
+            label = key.replace("_", " ")
+            raise ValueError(
+                f"Some selected recipients are missing “{label}”. Add it for every recipient, "
+                f"or remove {{{{{key}}}}} from the email before sending."
+            )
         value = str(values[key])
         return html.escape(value) if escape else value.replace("\r", " ").replace("\n", " ")
 
