@@ -20,7 +20,9 @@ class Settings(BaseSettings):
     storage_path: str = ".local/uploads"
     dry_run: bool = True
     delay_between_emails: float = 2
-    max_retries: int = 2
+    # Temporary SMTP/provider faults are common. Retry enough times to ride
+    # out short outages without ever re-sending an uncertain SMTP outcome.
+    max_retries: int = 5
     max_attachment_bytes: int = 18000000
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587

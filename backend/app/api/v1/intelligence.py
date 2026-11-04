@@ -15,11 +15,80 @@ from app.repositories.common import owned
 router = APIRouter()
 
 
+EMAIL_SCOPE_REFUSAL = "You can only ask AI to write emails."
+
+_OFF_TOPIC_MARKERS = (
+    "write code",
+    "python",
+    "javascript",
+    "typescript",
+    "weather",
+    "who is",
+    "what is bitcoin",
+    "tell me a joke",
+    "recipe",
+    "medical advice",
+    "legal advice",
+    "hack",
+    "ignore previous",
+    "system prompt",
+    "scrape",
+    "sql query",
+)
+
+
+def is_email_compose_request(data: AIInput) -> bool:
+    instruction = (data.instruction or "").strip().lower()
+    if not instruction:
+        return True
+    email_hints = (
+        "email",
+        "subject",
+        "outreach",
+        "campaign",
+        "recipient",
+        "follow up",
+        "follow-up",
+        "introduction",
+        "introduce",
+        "invite",
+        "meeting",
+        "partnership",
+        "hiring",
+        "rewrite",
+        "improve",
+        "shorten",
+        "expand",
+        "tone",
+        "professional",
+        "grammar",
+        "personalize",
+        "message",
+        "body",
+    )
+    if any(hint in instruction for hint in email_hints):
+        return True
+    if any(marker in instruction for marker in _OFF_TOPIC_MARKERS):
+        return False
+    # Ambiguous writing prompts still go to the email-only model.
+    return True
+
+
 def local_email_draft(data: AIInput):
+    if not is_email_compose_request(data):
+        return {
+            "in_scope": False,
+            "refusal_message": EMAIL_SCOPE_REFUSAL,
+            "subject": "",
+            "body": "",
+            "explanation": EMAIL_SCOPE_REFUSAL,
+        }
     instruction = data.instruction.strip()
     lowered = instruction.lower()
     if "hiring" in lowered and ("ai engineer" in lowered or "machine learning" in lowered):
         return {
+            "in_scope": True,
+            "refusal_message": "",
             "subject": "We are hiring: AI Engineer",
             "body": (
                 "<p>Hi,</p>"
@@ -35,8 +104,10 @@ def local_email_draft(data: AIInput):
         }
     subject = data.subject.strip() or "A quick introduction"
     if data.body.strip():
-        return {"subject": subject, "body": data.body}
+        return {"in_scope": True, "refusal_message": "", "subject": subject, "body": data.body}
     return {
+        "in_scope": True,
+        "refusal_message": "",
         "subject": subject,
         "body": "<p>Hi,</p><p>I wanted to get in touch and share a quick introduction.</p>"
         "<p>Please let me know if you would be open to a conversation.</p><p>Best,</p>",
@@ -62,12 +133,32 @@ def campaigns(user=Depends(current_user), db=Depends(get_db)):
 
 @router.post("/ai/compose", tags=["AI"])
 def compose(data: AIInput, user=Depends(editor), db=Depends(get_db)):
+    if not is_email_compose_request(data):
+        return {
+            "in_scope": False,
+            "refusal_message": EMAIL_SCOPE_REFUSAL,
+            "subject": "",
+            "body": "",
+            "explanation": EMAIL_SCOPE_REFUSAL,
+        }
     try:
-        return execute(db, user.organization_id, "compose", data.model_dump())
+        result = execute(db, user.organization_id, "compose", data.model_dump())
+        if result.get("in_scope") is False:
+            return {
+                "in_scope": False,
+                "refusal_message": result.get("refusal_message") or EMAIL_SCOPE_REFUSAL,
+                "subject": "",
+                "body": "",
+                "explanation": result.get("explanation") or EMAIL_SCOPE_REFUSAL,
+                "execution_id": result.get("execution_id"),
+            }
+        return {**result, "in_scope": True, "refusal_message": ""}
     except (ValueError, AIProviderError) as error:
         # Keep the compose workflow usable when no provider key is configured.
         # A configured Groq/Gemini provider still takes the primary path above.
         draft = local_email_draft(data)
+        if draft.get("in_scope") is False:
+            return draft
         return {
             **draft,
             "explanation": "Local draft created because no AI provider is currently available.",

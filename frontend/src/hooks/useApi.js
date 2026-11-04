@@ -38,10 +38,11 @@ export function useAction(fn, message = 'Saved successfully', options = {}) {
       // This keeps the toast from appearing ahead of the updated table.
       await new Promise((resolve) => requestAnimationFrame(resolve));
       await options.onSuccess?.(data, variables, context);
-      if (message) toast.success(typeof message === 'function' ? message(data) : message, { duration: 3000 });
+      const successText = typeof message === 'function' ? message(data) : message;
+      if (successText) toast.success(successText, { duration: 3000 });
     },
     onError: (e, variables, context) => {
-      toast.error(errorText(e));
+      if (!e?.silent) toast.error(errorText(e));
       options.onError?.(e, variables, context);
     },
   });

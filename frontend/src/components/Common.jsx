@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Inbox, Loader2, AlertCircle, ArrowRight, ArrowLeft, UploadCloud, ShieldAlert, LogOut, Trash2, Check, ChevronDown } from 'lucide-react';
+import { Inbox, Loader2, AlertCircle, ArrowRight, ArrowLeft, UploadCloud, ShieldAlert, LogOut, Trash2, Check, ChevronDown, Search } from 'lucide-react';
 import { Button } from './ui/button';
 import { useAction } from '../hooks/useApi';
 import { api } from '../services/api';
@@ -107,7 +107,7 @@ export function ConfirmDialog({ open, onOpenChange, title = 'Confirm deletion', 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) setError(''); onOpenChange(next); }} busy={busy} title={title} icon={Icon} description="Review this action before confirming." className={`confirm-modal ${isDelete ? 'confirm-delete' : 'confirm-neutral'}`}>
       <div className="confirm-modal-body">
-        <p>{message || <>Are you sure you want to delete <strong>{itemLabel}</strong>? This action cannot be undone.</>}</p>
+        {message ? <div className="confirm-modal-message">{message}</div> : <p>Are you sure you want to delete <strong>{itemLabel}</strong>? This action cannot be undone.</p>}
         {error && <div className="error-panel" role="alert">{error}</div>}
         <div className="confirm-modal-actions">
           <Button type="button" variant="secondary" disabled={busy} onClick={() => onOpenChange(false)}>{isLogout ? 'Stay signed in' : isDelete ? 'Keep it' : 'Go back'}</Button>
@@ -128,10 +128,15 @@ export function Field({ label, error, required = false, children }) {
     </label>
   );
 }
-export function PickerDropdown({ value, onChange, options, placeholder, icon: Icon, ariaLabel, className = '' }) {
+export function PickerDropdown({ value, onChange, options, placeholder, icon: Icon, ariaLabel, className = '', searchable = false, searchPlaceholder = 'Search options' }) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const root = useRef(null);
   const selected = options.find((option) => option.value === value);
+  const normalizedSearch = search.trim().toLowerCase();
+  const visibleOptions = normalizedSearch
+    ? options.filter((option) => [option.label, option.description, ...(option.searchTerms || [])].filter(Boolean).join(' ').toLowerCase().includes(normalizedSearch))
+    : options;
   useEffect(() => {
     const closeOutside = (event) => {
       if (root.current && !root.current.contains(event.target)) setOpen(false);
@@ -141,29 +146,37 @@ export function PickerDropdown({ value, onChange, options, placeholder, icon: Ic
   }, []);
   return (
     <div className={`picker-dropdown ${className}`.trim()} ref={root}>
-      <button type="button" className="picker-dropdown-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel || placeholder} onClick={() => setOpen((current) => !current)} onKeyDown={(event) => { if (event.key === 'Escape') setOpen(false); }}>
+      <button type="button" className="picker-dropdown-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel || placeholder} onClick={() => setOpen((current) => { if (current) setSearch(''); return !current; })} onKeyDown={(event) => { if (event.key === 'Escape') { setOpen(false); setSearch(''); } }}>
         <span>{Icon && <Icon size={15} />}<span>{selected?.label || placeholder}</span></span><ChevronDown size={16} className={open ? 'open' : ''} />
       </button>
       {open && <div className="picker-dropdown-menu" role="listbox" aria-label={ariaLabel || placeholder}>
-        {options.map((option) => <button type="button" role="option" aria-selected={option.value === value} className={option.value === value ? 'selected' : ''} key={option.value} onClick={() => { onChange(option.value); setOpen(false); }}>
+        {searchable && <label className="picker-dropdown-search"><Search size={14} /><input autoFocus type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={searchPlaceholder} aria-label={searchPlaceholder} /></label>}
+        {visibleOptions.map((option) => <button type="button" role="option" aria-selected={option.value === value} className={option.value === value ? 'selected' : ''} key={option.value} onClick={() => { onChange(option.value); setOpen(false); setSearch(''); }}>
           <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>{option.value === value && <Check size={16} />}
         </button>)}
+        {!visibleOptions.length && <p className="picker-dropdown-empty" role="status">No matching options</p>}
       </div>}
     </div>
   );
 }
 export function Pagination({ data, page, setPage }) {
+  const total = Number(data?.total) || 0;
+  const limit = Number(data?.limit) || 25;
+  const pageCount = Math.max(1, Math.ceil(total / limit));
+  const start = total ? (page - 1) * limit + 1 : 0;
+  const end = Math.min(page * limit, total);
   return (
     <div className="pagination">
-      <span>
-        {data.total} records · page {page}
-      </span>
+      <div className="pagination-summary">
+        <strong>{total ? `Showing ${start}–${end} of ${total}` : 'No records to show'}</strong>
+        <span>Page {Math.min(page, pageCount)} of {pageCount} · {limit} per page</span>
+      </div>
       <Button variant="ghost" disabled={page <= 1} onClick={() => setPage(page - 1)}>
         Previous
       </Button>
       <Button
         variant="ghost"
-        disabled={page * data.limit >= data.total}
+        disabled={page >= pageCount}
         onClick={() => setPage(page + 1)}
       >
         Next <ArrowRight size={14} />
@@ -171,7 +184,7 @@ export function Pagination({ data, page, setPage }) {
     </div>
   );
 }
-export function Uploader({ onUploaded, onBusyChange, multiple = true, compact = false, accept = '.pdf,.docx,.doc,.xlsx,.xls,.csv,.xml,.txt,.json,.png,.jpg,.jpeg', allowedExtensions, description, label = 'Choose documents to upload' }) {
+export function Uploader({ onUploaded, onBusyChange, multiple = true, compact = false, accept = '.pdf,.docx,.doc,.xlsx,.xls,.csv,.xml,.txt,.json,.png,.jpg,.jpeg', allowedExtensions, description, label = 'Choose documents to upload', successMessage = 'Files uploaded securely' }) {
   const upload = useAction(async (files) => {
     const docs = [];
     for (const file of files) {
@@ -180,7 +193,7 @@ export function Uploader({ onUploaded, onBusyChange, multiple = true, compact = 
       docs.push((await api.post('/documents/upload', body)).data);
     }
     return docs;
-  }, 'Files uploaded securely', {
+  }, successMessage, {
     invalidatePrefixes: ['/documents'],
     onSuccess: (docs) => onUploaded?.(docs),
     onSettled: () => onBusyChange?.(false),

@@ -103,6 +103,7 @@ export default function Templates() {
           </Field>
           <Field label="Associate a private attachment">
             <PickerDropdown
+              searchable
               value={attachment}
               onChange={setAttachment}
               placeholder="Reuse a private workspace file"

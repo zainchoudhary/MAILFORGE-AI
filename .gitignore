@@ -12,5 +12,6 @@ frontend/dist/
 .DS_Store
 .rdb
 dump.rdb
+celerybeat-schedule*
 .local/
 backend/uploads/

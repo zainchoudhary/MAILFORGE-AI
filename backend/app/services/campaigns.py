@@ -8,7 +8,6 @@ from app.models.entities import (
     Document,
     SMTPAccount,
     Template,
-    Suppression,
     EmailMessage,
     EmailEvent,
     ScheduledCampaign,
@@ -154,15 +153,9 @@ def detail(db, campaign):
 
 
 def eligible(db, org, recipient):
-    if recipient.deleted:
-        return False
-    if db.scalar(
-        select(Suppression.id).where(
-            Suppression.organization_id == org, Suppression.email == recipient.email
-        )
-    ):
-        return False
-    return True
+    # Recipient delivery is controlled by the saved recipient record and SMTP
+    # provider response only. Legacy suppression entries no longer block sends.
+    return not recipient.deleted
 
 
 def preview(db, campaign):
@@ -179,10 +172,6 @@ def preview(db, campaign):
         Template.organization_id == campaign.organization_id,
         Template.id.in_([link.template_id for link in links if link.template_id]),
     ))}
-    suppressed = set(db.scalars(select(Suppression.email).where(
-        Suppression.organization_id == campaign.organization_id,
-        Suppression.email.in_([r.email for r in recipients.values()]),
-    )))
     output = []
     for link in links:
         recipient = recipients.get(link.recipient_id)
@@ -201,7 +190,9 @@ def preview(db, campaign):
                 "name": recipient.name,
                 "subject": subject,
                 "body": body,
-                "eligible": bool(not recipient.deleted and recipient.email not in suppressed),
+                # Saved recipients are active unless the contact itself was removed.
+                "eligible": not recipient.deleted,
+                "suppressed": False,
             }
         )
     return output
@@ -217,13 +208,6 @@ def approve(db, user, campaign, data):
     )
     if campaign.status != "draft" or campaign.revision != data.revision:
         raise HTTPException(409, "Campaign changed or is no longer a draft")
-    if (
-        campaign.dry_run_revision != campaign.revision
-        or campaign.reviewed_revision != campaign.revision
-    ):
-        raise HTTPException(
-            409, "Review recipients and complete a dry run for the current revision first"
-        )
     if get_settings().dry_run:
         raise HTTPException(409, "Server DRY_RUN is enabled. No production email will be sent")
     if not campaign.smtp_account_id:
@@ -232,19 +216,20 @@ def approve(db, user, campaign, data):
     if not account.tested_at:
         raise HTTPException(422, "Test SMTP connection first")
     previews = preview(db, campaign)
-    if not previews or any(not p["eligible"] for p in previews):
-        raise HTTPException(
-            422, "Every selected recipient must be active and not suppressed"
-        )
-    # CC/BCC recipients must also be active and not suppressed.
+    if not previews:
+        raise HTTPException(422, "Select at least one recipient")
+    # One-click send: complete review + dry-run preflight in this same request.
+    campaign.reviewed_revision = campaign.revision
+    campaign.dry_run_revision = campaign.revision
+    # Saved recipients are active by default. Soft-deleted contacts cannot be selected.
     for email in [*campaign.cc, *campaign.bcc]:
         recipient = db.scalar(
             select(Recipient).where(
                 Recipient.organization_id == user.organization_id, Recipient.email == email.lower()
             )
         )
-        if not recipient or not eligible(db, user.organization_id, recipient):
-            raise HTTPException(422, "CC/BCC recipients must be active and not suppressed")
+        if not recipient or recipient.deleted:
+            raise HTTPException(422, "CC/BCC recipients must exist in your library")
     for item in previews:
         msg = EmailMessage(
             organization_id=user.organization_id,

@@ -1,4 +1,3 @@
-import io
 import json
 import re
 import subprocess
@@ -10,6 +9,13 @@ from defusedxml import ElementTree
 EMAIL_PATTERN = re.compile(
     r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,63}"
 )
+HEADER_PATTERN = re.compile(r"[^a-z0-9]+")
+RECIPIENT_FIELD_ALIASES = {
+    "email": {"email", "emailaddress", "emailid", "emailaddress", "workemail", "businessemail", "e-mail"},
+    "name": {"name", "fullname", "contactname", "recipientname"},
+    "company": {"company", "companyname", "organization", "organisation", "employer", "business"},
+    "position": {"position", "jobtitle", "title", "role", "designation", "jobrole"},
+}
 ALLOWED = {
     ".pdf",
     ".docx",
@@ -36,29 +42,15 @@ def check_archive(path):
                 raise ValueError("Archive exceeds safe decompression limits")
 
 
-def ocr(image):
-    import pytesseract
-
-    return pytesseract.image_to_string(image, timeout=45)
-
-
 def read_document(path: Path, extension: str):
     check_archive(path)
     if extension == ".pdf":
         import fitz
-        from PIL import Image
 
         with fitz.open(path) as doc:
             if len(doc) > 200:
                 raise ValueError("Maximum 200 PDF pages")
-            text = []
-            for page in doc:
-                raw = page.get_text()
-                if len(raw.strip()) < 20:
-                    pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
-                    raw = ocr(Image.open(io.BytesIO(pix.tobytes("png"))))
-                text.append(raw)
-            return "\n".join(text), []
+            return "\n".join(page.get_text() for page in doc), []
     if extension == ".docx":
         from docx import Document
 
@@ -91,11 +83,9 @@ def read_document(path: Path, extension: str):
         ]
         return "\n".join(" | ".join(r.values()) for r in records), records
     if extension in (".png", ".jpg", ".jpeg"):
-        from PIL import Image
-
-        Image.MAX_IMAGE_PIXELS = 25_000_000
-        with Image.open(path) as image:
-            return ocr(image), []
+        # Images are stored as private attachments; they are not contact-import
+        # sources and are intentionally never sent through OCR.
+        return "", []
     raw = path.read_text(encoding="utf-8-sig")
     if extension == ".xml":
         root = ElementTree.fromstring(raw)
@@ -110,11 +100,45 @@ def read_document(path: Path, extension: str):
     return raw, []
 
 
+def _header_key(value):
+    return HEADER_PATTERN.sub("", str(value).strip().lower())
+
+
+def _value_for_alias(row, aliases):
+    for key, value in row.items():
+        if _header_key(key) in aliases and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _recipient_fields(row):
+    normalized = {_header_key(key): key for key in row}
+    name = _value_for_alias(row, RECIPIENT_FIELD_ALIASES["name"])
+    if not name:
+        first_name = _value_for_alias(row, {"firstname", "givenname"})
+        last_name = _value_for_alias(row, {"lastname", "surname", "familyname"})
+        name = " ".join(part for part in (first_name, last_name) if part)
+    used = {
+        original_key
+        for normalized_key, original_key in normalized.items()
+        if any(normalized_key in aliases for aliases in RECIPIENT_FIELD_ALIASES.values())
+        or normalized_key in {"firstname", "givenname", "lastname", "surname", "familyname"}
+    }
+    return {
+        "email": _value_for_alias(row, RECIPIENT_FIELD_ALIASES["email"]),
+        "name": name,
+        "company": _value_for_alias(row, RECIPIENT_FIELD_ALIASES["company"]),
+        "position": _value_for_alias(row, RECIPIENT_FIELD_ALIASES["position"]),
+        "custom_fields": {key: value for key, value in row.items() if key not in used and key != "text"},
+    }
+
+
 def extract_recipients(text, rows=None):
     found = {}
     duplicates = 0
     sources = rows or [{"text": line} for line in text.splitlines()]
     for row in sources:
+        fields = _recipient_fields(row)
         for candidate in EMAIL_PATTERN.findall(" ".join(str(v) for v in row.values())):
             try:
                 email = validate_email(candidate, check_deliverability=False).normalized.lower()
@@ -125,13 +149,9 @@ def extract_recipients(text, rows=None):
                 continue
             found[email] = {
                 "email": email,
-                "name": row.get("name", row.get("full name", "")),
-                "company": row.get("company", row.get("organization", "")),
-                "position": row.get("position", row.get("title", "")),
-                "custom_fields": {
-                    k: v
-                    for k, v in row.items()
-                    if k not in ("email", "name", "company", "position", "text")
-                },
+                "name": fields["name"],
+                "company": fields["company"],
+                "position": fields["position"],
+                "custom_fields": fields["custom_fields"],
             }
     return list(found.values()), duplicates

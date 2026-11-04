@@ -5,6 +5,52 @@ from app.models.entities import Campaign, EmailMessage, now
 from test_workflow import recipient, campaign, preflight, enable_smtp
 
 
+def test_enqueue_deliveries_publishes_a_message_once_while_its_lease_exists(monkeypatch):
+    from app.workers import tasks
+
+    class FakeRedis:
+        keys = set()
+
+        def set(self, key, value, nx=False, ex=None):
+            if nx and key in self.keys:
+                return False
+            self.keys.add(key)
+            return True
+
+    published = []
+    fake_redis = FakeRedis()
+    monkeypatch.setattr(tasks.Redis, "from_url", lambda _: fake_redis)
+    monkeypatch.setattr(
+        tasks.deliver,
+        "apply_async",
+        lambda **kwargs: published.append(kwargs),
+    )
+
+    tasks.enqueue_deliveries([("message-1", "workspace-1")])
+    tasks.enqueue_deliveries([("message-1", "workspace-1")])
+
+    assert published == [{"args": ["message-1"], "countdown": 0}]
+
+
+def test_dispatch_lock_allows_only_one_recovery_run(monkeypatch):
+    from app.workers import tasks
+
+    class FakeRedis:
+        keys = set()
+
+        def set(self, key, value, nx=False, ex=None):
+            if nx and key in self.keys:
+                return False
+            self.keys.add(key)
+            return True
+
+    fake_redis = FakeRedis()
+    monkeypatch.setattr(tasks.Redis, "from_url", lambda _: fake_redis)
+
+    assert tasks.claim_dispatch_lock() is True
+    assert tasks.claim_dispatch_lock() is False
+
+
 def approved(client, account, db, **kwargs):
     r = recipient(client, account)
     c = campaign(client, account, [r["id"]], **kwargs)
@@ -36,7 +82,24 @@ def test_transient_smtp_rejection_uses_backoff(client, account, db, monkeypatch)
     assert db.get(EmailMessage, msg.id).attempts == 1
 
 
-def test_suppression_is_rechecked_at_send_time(client, account, db, monkeypatch):
+def test_transient_smtp_rejection_schedules_its_own_retry(client, account, db, monkeypatch):
+    c, msg = approved(client, account, db)
+    from app.workers import tasks
+
+    monkeypatch.setattr(
+        tasks,
+        "send",
+        lambda *args: (_ for _ in ()).throw(smtplib.SMTPResponseException(451, b"Try later")),
+    )
+    scheduled = []
+    monkeypatch.setattr(tasks.deliver, "apply_async", lambda **kwargs: scheduled.append(kwargs))
+
+    tasks.deliver.run(msg.id)
+
+    assert scheduled == [{"args": [msg.id], "countdown": 30}]
+
+
+def test_suppression_does_not_cancel_a_queued_delivery(client, account, db, monkeypatch):
     c, msg = approved(client, account, db)
     client.post(
         "/api/v1/suppressions",
@@ -46,10 +109,10 @@ def test_suppression_is_rechecked_at_send_time(client, account, db, monkeypatch)
     from app.workers import tasks
 
     calls = []
-    monkeypatch.setattr(tasks, "send", lambda *args: calls.append(1))
+    monkeypatch.setattr(tasks, "send", lambda *args: calls.append(1) or "250 accepted")
     tasks.deliver.run(msg.id)
     db.expire_all()
-    assert calls == [] and db.get(EmailMessage, msg.id).status == "cancelled"
+    assert calls == [1] and db.get(EmailMessage, msg.id).status == "smtp_accepted"
 
 
 def test_scheduled_campaign_not_dispatched_early(client, account, db, monkeypatch):

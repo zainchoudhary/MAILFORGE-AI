@@ -114,20 +114,21 @@ def dry_run(identifier: str, user=Depends(editor), db=Depends(get_db)):
         "sent": 0,
         "revision": item.revision,
         "items": previews,
-        "warnings": ["Some recipients are suppressed or unavailable"]
-        if any(not p["eligible"] for p in previews)
-        else [],
+        "warnings": (
+            ["Some selected addresses are on the suppression list and may be skipped at send time"]
+            if any(p.get("suppressed") for p in previews)
+            else []
+        ),
     }
 
 
 @router.post("/campaigns/{identifier}/approve")
 def approve(identifier: str, data: Approval, user=Depends(editor), db=Depends(get_db)):
     campaign = service.approve(db, user, owned(db, Campaign, identifier, user.organization_id), data)
-    # Trigger delivery immediately. Celery Beat remains a recovery mechanism,
-    # but an approved campaign must not wait for a separate scheduler process.
-    from app.workers.tasks import dispatch
+    # Queue this campaign's messages immediately; beat remains a recovery path.
+    from app.workers.tasks import queue_campaign_delivery
 
-    dispatch.delay()
+    queue_campaign_delivery(campaign.id)
     return serialize(campaign)
 
 

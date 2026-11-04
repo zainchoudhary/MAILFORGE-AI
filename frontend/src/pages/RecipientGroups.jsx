@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { FolderPlus, UsersRound, Pencil, Trash2, Search, Check, ListPlus } from 'lucide-react';
+import { FolderPlus, UsersRound, Pencil, Trash2, Search, Check, ListPlus, Eye, Mail, Building2 } from 'lucide-react';
 import { useApi, useAction } from '../hooks/useApi';
 import { api } from '../services/api';
 import { BusyButton, ConfirmDialog, Empty, Field, PageHeader, QueryState } from '../components/Common';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
+import { getGroupPreviewMembers } from '../services/recipientGroups';
 
 const schema = z.object({ name: z.string().trim().min(1, 'Group name is required').max(200) });
 
 export default function RecipientGroups() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const groups = useApi('/recipient-groups');
   const recipients = useApi('/recipients?limit=100');
   const [open, setOpen] = useState(false);
@@ -19,6 +23,7 @@ export default function RecipientGroups() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [search, setSearch] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [previewTarget, setPreviewTarget] = useState(null);
   const form = useForm({ resolver: zodResolver(schema), defaultValues: { name: '' } });
   const availableRecipients = recipients.data?.items || [];
   const groupCount = groups.data?.items.length || 0;
@@ -51,6 +56,14 @@ export default function RecipientGroups() {
   useEffect(() => {
     if (!open) form.clearErrors();
   }, [open, form]);
+  useEffect(() => {
+    const groupId = location.state?.openGroupId;
+    const group = groups.data?.items?.find((item) => item.id === groupId);
+    if (group) {
+      openEditor(group);
+      navigate('/recipient-groups', { replace: true, state: null });
+    }
+  }, [groups.data, location.state, navigate]);
   const toggleRecipient = (id) => setSelectedIds((current) => current.includes(id)
     ? current.filter((recipientId) => recipientId !== id)
     : [...current, id]);
@@ -77,6 +90,7 @@ export default function RecipientGroups() {
                 <div className="group-card-icon"><UsersRound size={19} /></div>
                 <div className="group-card-content"><h3>{group.name}</h3><p>{group.recipient_count} {group.recipient_count === 1 ? 'recipient' : 'recipients'} saved</p></div>
                 <div className="group-card-actions">
+                  <Button variant="ghost" size="icon" aria-label={`Preview ${group.name}`} onClick={() => setPreviewTarget(group)}><Eye size={15} /></Button>
                   <Button variant="ghost" size="icon" aria-label={`Edit ${group.name}`} onClick={() => openEditor(group)}><Pencil size={15} /></Button>
                   <Button variant="ghost" size="icon" aria-label={`Delete ${group.name}`} onClick={() => setDeleteTarget(group)}><Trash2 size={15} /></Button>
                 </div>
@@ -105,6 +119,15 @@ export default function RecipientGroups() {
         </form>
       </Dialog>
       <ConfirmDialog open={!!deleteTarget} onOpenChange={(value) => !value && setDeleteTarget(null)} title="Delete recipient group" itemLabel={deleteTarget?.name} message={<>Delete <strong>{deleteTarget?.name}</strong>? Contacts stay in your library; only this saved group is removed.</>} confirmLabel="Delete group" processingLabel="Deleting group…" onConfirm={() => remove.mutateAsync(deleteTarget.id)} />
+      <Dialog open={!!previewTarget} onOpenChange={(value) => !value && setPreviewTarget(null)} title={previewTarget ? `${previewTarget.name} members` : 'Recipient group preview'} description="A read-only view of the people in this saved recipient group.">
+        <div className="group-preview" aria-label="Recipient group members">
+          <div className="group-preview-summary"><span><UsersRound size={16} /></span><div><strong>{previewTarget?.recipient_count || 0} saved members</strong><small>Member details are private to this workspace.</small></div></div>
+          {(() => {
+            const members = getGroupPreviewMembers(previewTarget);
+            return members.length ? <div className="group-preview-members">{members.map((member) => <article key={member.id}><span className="group-recipient-avatar">{(member.name || member.email).slice(0, 1).toUpperCase()}</span><div><strong>{member.name || member.email}</strong><small><Mail size={12} /> {member.email}</small>{(member.company || member.position) && <small><Building2 size={12} /> {[member.company, member.position].filter(Boolean).join(' · ')}</small>}</div></article>)}</div> : <Empty title="No members available" description="This group has no active recipients to preview." />;
+          })()}
+        </div>
+      </Dialog>
     </>
   );
 }

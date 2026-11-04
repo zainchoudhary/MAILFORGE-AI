@@ -2,7 +2,7 @@ import hashlib
 import hmac
 import json
 from sqlalchemy import select, func
-from app.models.entities import Campaign, SMTPAccount, EmailMessage, DeliveryAttempt, now
+from app.models.entities import Campaign, SMTPAccount, EmailMessage, DeliveryAttempt, RecipientGroup, GroupMember, now
 from app.core.config import get_settings
 from app.security.auth import encrypt
 
@@ -16,6 +16,41 @@ def recipient(client, headers, email="alex@example.com"):
     assert response.status_code == 201, response.text
     record = response.json()
     return record
+
+
+def test_recipient_groups_are_reported_and_empty_groups_are_removed(client, account, db):
+    contact = recipient(client, account)
+    teammate = recipient(client, account, "teammate@example.com")
+    group = client.post(
+        "/api/v1/recipient-groups",
+        headers=account,
+        json={"name": "Design candidates", "recipient_ids": [contact["id"], teammate["id"]]},
+    )
+    assert group.status_code == 201, group.text
+
+    groups = client.get("/api/v1/recipient-groups", headers=account)
+    assert groups.status_code == 200, groups.text
+    listed_group = next(item for item in groups.json()["items"] if item["id"] == group.json()["id"])
+    assert [member["id"] for member in listed_group["recipient_members"]] == [contact["id"], teammate["id"]]
+
+    memberships = client.get(f"/api/v1/recipients/{contact['id']}/groups", headers=account)
+    assert memberships.status_code == 200, memberships.text
+    assert memberships.json()["items"] == [{"id": group.json()["id"], "name": "Design candidates"}]
+
+    recipient_list = client.get("/api/v1/recipients", headers=account)
+    listed_contact = next(item for item in recipient_list.json()["items"] if item["id"] == contact["id"])
+    assert listed_contact["recipient_groups"] == [{"id": group.json()["id"], "name": "Design candidates"}]
+
+    deleted = client.delete(f"/api/v1/recipients/{contact['id']}", headers=account)
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["auto_deleted_groups"] == []
+    assert db.get(RecipientGroup, group.json()["id"]) is not None
+
+    deleted = client.delete(f"/api/v1/recipients/{teammate['id']}", headers=account)
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["auto_deleted_groups"] == [{"id": group.json()["id"], "name": "Design candidates"}]
+    assert db.get(RecipientGroup, group.json()["id"]) is None
+    assert db.scalar(select(GroupMember).where(GroupMember.group_id == group.json()["id"])) is None
 
 
 def campaign(client, headers, ids, **kwargs):
@@ -152,7 +187,7 @@ def test_queue_delivery_idempotency_and_actual_metrics(client, account, db, monk
     assert client.get(url + "/report", headers=account).status_code == 200
 
 
-def test_suppression_blocks_approval(client, account, db):
+def test_suppression_does_not_block_approval(client, account, db):
     r = recipient(client, account)
     assert client.post(
         "/api/v1/suppressions",
@@ -167,8 +202,8 @@ def test_suppression_blocks_approval(client, account, db):
         headers=account,
         json={"revision": 1, "confirm": True},
     )
-    assert result.status_code == 422
-    assert db.scalar(select(func.count()).select_from(EmailMessage)) == 0
+    assert result.status_code == 200, result.text
+    assert db.scalar(select(func.count()).select_from(EmailMessage)) == 1
 
 
 def test_changes_invalidate_preflight(client, account):

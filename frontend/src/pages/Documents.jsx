@@ -33,7 +33,7 @@ export default function Documents() {
           <div className="document-library-actions">
             <small>{selectionMode ? `${selectedDocumentIds.length} selected` : 'Select files when you need to manage more than one.'}</small>
             <div>
-              <Button variant={selectionMode ? 'default' : 'secondary'} size="sm" onClick={() => { setSelectionMode((active) => !active); if (selectionMode) setSelectedDocumentIds([]); }}><ListChecks size={14} /> {selectionMode ? 'Done selecting' : 'Select multiple'}</Button>
+              <Button variant={selectionMode ? 'default' : 'secondary'} size="sm" onClick={() => { setSelectionMode((active) => !active); if (selectionMode) setSelectedDocumentIds([]); }}><ListChecks size={14} /> {selectionMode ? 'Cancel' : 'Select multiple'}</Button>
               {selectionMode && <Button variant="secondary" size="sm" onClick={() => { const pageIds = data.items.map((document) => document.id); const allSelected = pageIds.length > 0 && pageIds.every((id) => selectedDocumentIds.includes(id)); setSelectedDocumentIds(allSelected ? selectedDocumentIds.filter((id) => !pageIds.includes(id)) : [...new Set([...selectedDocumentIds, ...pageIds])]); }}>{data.items.every((document) => selectedDocumentIds.includes(document.id)) ? 'Deselect all' : 'Select all'}</Button>}
               {selectionMode && selectedDocumentIds.length > 0 && <Button variant="destructive" size="sm" onClick={() => setBulkDeleteOpen(true)}><Trash2 size={14} /> Delete {selectedDocumentIds.length} selected</Button>}
             </div>

@@ -3,13 +3,16 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Eye, FileText, Save, Send, Sparkles, X, ArrowRight, Check, ChevronDown, UsersRound } from 'lucide-react';
+import { Eye, FileText, Save, Send, Sparkles, X, ArrowRight, Check, ChevronDown, UsersRound, Search, Mail, Building2 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { useApi, useAction } from '../hooks/useApi';
 import { api } from '../services/api';
-import { PageHeader, Field, BusyButton, ConfirmDialog, Uploader, sizeLabel, PickerDropdown } from '../components/Common';
+import { PageHeader, Field, BusyButton, ConfirmDialog, Empty, Uploader, sizeLabel, PickerDropdown } from '../components/Common';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 import { RichEditor, EmailPreview } from '../components/RichEditor';
+import { getGroupPreviewMembers } from '../services/recipientGroups';
 const schema = z.object({
   name: z.string().min(1, 'Campaign name is required'),
   subject: z.string().min(1, 'Subject is required').max(998),
@@ -38,8 +41,13 @@ const parseManualRecipients = (value) =>
     });
 export default function Compose() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const editId = params.get('edit');
+  useEffect(() => {
+    // Warm the campaign detail chunk so post-send navigation is not waiting on download.
+    void import('./Campaigns');
+  }, []);
   const [recipientIds, setRecipientIds] = useState([]);
   const [manual, setManual] = useState('');
   const [attachments, setAttachments] = useState([]);
@@ -47,18 +55,18 @@ export default function Compose() {
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
   const [preview, setPreview] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [instruction, setInstruction] = useState('');
   const [groupsOpen, setGroupsOpen] = useState(false);
+  const [groupSearch, setGroupSearch] = useState('');
+  const [previewGroup, setPreviewGroup] = useState(null);
   const groupDropdownRef = useRef(null);
   const [sendOpen, setSendOpen] = useState(false);
-  const [tone, setTone] = useState('professional');
-  const [instruction, setInstruction] = useState('');
-  const [action, setAction] = useState('generate');
   const [selectedTemplate, setSelectedTemplate] = useState('');
-  const [recipientPage, setRecipientPage] = useState(1);
-  const [recipientQuery, setRecipientQuery] = useState('');
-  const recipients = useApi(
-    `/recipients?limit=100&page=${recipientPage}&q=${encodeURIComponent(recipientQuery)}`,
-  );
+  const [autosaveStatus, setAutosaveStatus] = useState('');
+  const [recoveryReady, setRecoveryReady] = useState(Boolean(editId));
+  const autosaveInFlight = useRef(false);
+  const recipients = useApi('/recipients?limit=100');
   const recipientGroups = useApi('/recipient-groups');
   const drafts = useApi('/campaigns?status=draft&limit=5');
   const templates = useApi('/templates');
@@ -73,6 +81,8 @@ export default function Compose() {
   const isGroupSelected = (group) => group.recipient_ids.length > 0
     && group.recipient_ids.every((id) => recipientIds.includes(id));
   const selectedGroups = (recipientGroups.data?.items || []).filter(isGroupSelected);
+  const selectedRecipients = (recipients.data?.items || []).filter((recipient) => recipientIds.includes(recipient.id));
+  const visibleGroups = (recipientGroups.data?.items || []).filter((group) => group.name.toLowerCase().includes(groupSearch.trim().toLowerCase()));
   useEffect(() => {
     const closeWhenOutside = (event) => {
       if (groupDropdownRef.current && !groupDropdownRef.current.contains(event.target)) setGroupsOpen(false);
@@ -93,38 +103,33 @@ export default function Compose() {
     }
   }, [existing.data, form]);
   const ai = useAction(async () => {
-    let data;
-    try {
-      const response = await api.post('/ai/compose', {
-        action,
-        tone,
-        instruction,
-        subject: values.subject,
-        body: values.body,
-      });
-      data = response.data;
-    } catch (error) {
-      // Keep the button useful even when an older backend is still running or
-      // the external AI provider is unavailable.
-      const hiringAi = /hiring.*(ai engineer|machine learning)|(ai engineer|machine learning).*hiring/i.test(
-        instruction,
-      );
-      data = hiringAi
-        ? {
-            subject: 'We are hiring: AI Engineer',
-            body:
-              '<p>Hi,</p><p>We are looking for a talented AI Engineer to join our team and help us build practical, reliable AI products.</p><p>In this role, you will design and deploy machine-learning solutions, work with large language models, and collaborate with product and engineering teams to turn ideas into production-ready systems.</p><p>If you are interested, please reply with your resume and a short introduction about your experience.</p><p>Best,<br />The Hiring Team</p>',
-          }
-        : {
-            subject: values.subject || 'A quick introduction',
-            body:
-              values.body ||
-              '<p>Hi,</p><p>I wanted to get in touch and share a quick introduction.</p><p>Please let me know if you would be open to a conversation.</p><p>Best,</p>',
-          };
+    const { data } = await api.post('/ai/compose', {
+      action: 'generate',
+      tone: 'professional',
+      instruction: instruction.trim(),
+      subject: values.subject,
+      body: values.body,
+    });
+    const refusal = data.refusal_message || 'You can only ask AI to write emails.';
+    const plainBody = String(data.body || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+    const looksLikeRefusal =
+      data.in_scope === false ||
+      plainBody.includes('only ask ai to write emails') ||
+      plainBody.includes('only help with writing or improving this email');
+    if (looksLikeRefusal) {
+      toast.error(refusal);
+      return { refused: true };
     }
-    form.setValue('subject', data.subject, { shouldValidate: true });
-    form.setValue('body', data.body, { shouldValidate: true });
-  }, 'AI draft is ready for your review');
+    if (data.subject) form.setValue('subject', data.subject, { shouldValidate: true });
+    if (data.body) form.setValue('body', data.body, { shouldValidate: true });
+    setAiOpen(false);
+    setInstruction('');
+    return data;
+  }, (data) => (data?.refused ? '' : 'AI draft is ready for your review'));
   const persistDraft = async (data) => {
     const ids = [...recipientIds];
     for (const recipient of parseManualRecipients(manual)) {
@@ -151,20 +156,89 @@ export default function Compose() {
       : await api.post('/emails/compose', payload);
     return result.data;
   };
+  useEffect(() => {
+    if (editId || existing.isPending || existing.data) {
+      setRecoveryReady(true);
+      return;
+    }
+    try {
+      const saved = JSON.parse(localStorage.getItem('outreach-studio:compose-recovery') || 'null');
+      if (saved?.values) {
+        form.reset(saved.values);
+        setRecipientIds(saved.recipientIds || []);
+        setManual(saved.manual || '');
+        setAttachments(saved.attachments || []);
+        setSmtp(saved.smtp || '');
+        setCc(saved.cc || '');
+        setBcc(saved.bcc || '');
+        setSelectedTemplate(saved.selectedTemplate || '');
+        setAutosaveStatus('Recovered your unsaved draft');
+      }
+    } catch {
+      // Ignore an invalid old browser recovery record.
+    } finally {
+      setRecoveryReady(true);
+    }
+  }, [editId, existing.data, existing.isPending, form]);
+  useEffect(() => {
+    if (!recoveryReady || existing.isPending) return undefined;
+    const snapshot = {
+      values,
+      recipientIds,
+      manual,
+      attachments,
+      smtp,
+      cc,
+      bcc,
+      selectedTemplate,
+    };
+    try {
+      localStorage.setItem('outreach-studio:compose-recovery', JSON.stringify(snapshot));
+    } catch {
+      // Browser storage is only a recovery aid; campaign persistence remains server-backed.
+    }
+    if (!schema.safeParse(values).success) {
+      setAutosaveStatus('Saved locally while you finish the required fields');
+      return undefined;
+    }
+    const timer = window.setTimeout(async () => {
+      if (autosaveInFlight.current) return;
+      autosaveInFlight.current = true;
+      setAutosaveStatus('Saving automatically…');
+      try {
+        const saved = await persistDraft(values);
+        setAutosaveStatus('Saved automatically');
+        if (!editId) navigate(`/compose?edit=${saved.id}`, { replace: true });
+      } catch {
+        setAutosaveStatus('Changes are safe here — automatic save will retry after your next edit');
+      } finally {
+        autosaveInFlight.current = false;
+      }
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [attachments, bcc, cc, editId, existing.isPending, manual, navigate, recipientIds, recoveryReady, selectedTemplate, smtp, values]);
   const save = useAction(persistDraft, 'Draft saved.', {
     invalidatePrefixes: ['/campaigns', '/recipients', '/analytics'],
     onSuccess: (data) => navigate(`/compose?edit=${data.id}`),
   });
   const send = useAction(async (data) => {
     const draft = await persistDraft(data);
-    await api.post(`/campaigns/${draft.id}/review`, { revision: draft.revision, confirm: true });
-    await api.post(`/campaigns/${draft.id}/dry-run`);
-    return (await api.post(`/campaigns/${draft.id}/approve`, { revision: draft.revision, confirm: true })).data;
-  }, 'Campaign delivery has started. Live progress is shown below.', {
+    return (
+      await api.post(`/campaigns/${draft.id}/approve`, {
+        revision: draft.revision,
+        confirm: true,
+      })
+    ).data;
+  }, '', {
     invalidatePrefixes: ['/campaigns', '/analytics', '/recipients', '/emails'],
+    awaitRefetch: false,
     onSuccess: (data) => {
       setSendOpen(false);
-      navigate(`/campaigns/${data.id}`);
+      // Approval returns a compact campaign record. Let CampaignDetail fetch
+      // its complete shape instead of briefly rendering this partial payload.
+      queryClient.removeQueries({ queryKey: [`/campaigns/${data.id}`], exact: true });
+      sessionStorage.setItem(`mf_delivery_toast_${data.id}`, '1');
+      navigate(`/campaigns/${data.id}`, { replace: true });
     },
   });
   return (
@@ -184,7 +258,18 @@ export default function Compose() {
           <Save size={16} />
           Save draft
         </BusyButton>
-        <Button onClick={form.handleSubmit(() => setSendOpen(true))} disabled={save.isPending || send.isPending}>
+        {autosaveStatus && <span className="compose-autosave-status" role="status">{autosaveStatus}</span>}
+        <Button
+          onClick={form.handleSubmit(() => {
+            const account = (accounts.data?.items || []).find((item) => item.id === smtp);
+            if (!smtp || !account?.tested_at) {
+              toast.error('Select a tested SMTP account');
+              return;
+            }
+            setSendOpen(true);
+          })}
+          disabled={save.isPending || send.isPending}
+        >
           <Send size={16} /> Send campaign
         </Button>
       </PageHeader>
@@ -198,6 +283,7 @@ export default function Compose() {
               </Field>
               <Field label="From email">
                 <PickerDropdown
+                  searchable
                   value={smtp}
                   onChange={setSmtp}
                   placeholder="Choose sender email"
@@ -227,70 +313,114 @@ export default function Compose() {
               />
             </Field>
             <small>For every new contact, full name and email are required. Use Full name &lt;email address&gt;.</small>
-            {!!recipientGroups.data?.items.length && <div className="compose-group-dropdown" ref={groupDropdownRef}>
-              <button type="button" className="compose-group-trigger" aria-haspopup="listbox" aria-expanded={groupsOpen} onClick={() => setGroupsOpen((open) => !open)}>
-                <span><UsersRound size={15} /><span>Saved recipient groups</span></span><ChevronDown size={16} className={groupsOpen ? 'open' : ''} />
-              </button>
-              {groupsOpen && <div className="compose-group-menu" role="listbox" aria-label="Saved recipient groups">
-                <div className="compose-group-menu-head"><span>Select a saved audience</span><small>Click again to remove it</small></div>
-                {recipientGroups.data.items.map((group) => {
-                  const allSelected = isGroupSelected(group);
-                  return <button type="button" role="option" aria-selected={allSelected} className={allSelected ? 'selected' : ''} key={group.id} onClick={() => setRecipientIds((current) => allSelected ? current.filter((id) => !group.recipient_ids.includes(id)) : [...new Set([...current, ...group.recipient_ids])])}>
-                    <span className="compose-group-menu-icon"><UsersRound size={15} /></span><span><strong>{group.name}</strong><small>{group.recipient_count} {group.recipient_count === 1 ? 'recipient' : 'recipients'}</small></span>{allSelected && <Check size={16} />}
-                  </button>;
-                })}
-              </div>}
-            </div>}
-            {!!selectedGroups.length && <div className="compose-selected-groups" aria-label="Selected recipient groups"><span>Selected groups</span><div>{selectedGroups.map((group) => <button type="button" key={group.id} onClick={() => setRecipientIds((current) => current.filter((id) => !group.recipient_ids.includes(id)))}>{group.name}<X size={13} aria-hidden="true" /></button>)}</div></div>}
-            <input
-              className="mt-3"
-              placeholder="Search saved recipients"
-              value={recipientQuery}
-              onChange={(e) => {
-                setRecipientQuery(e.target.value);
-                setRecipientPage(1);
-              }}
-            />
-            <div className="recipient-picker">
-              {recipients.data?.items.map((r) => (
-                <label key={r.id}>
-                  <input
-                    type="checkbox"
-                    checked={recipientIds.includes(r.id)}
-                    onChange={(e) =>
-                      setRecipientIds(
-                        e.target.checked
-                          ? [...recipientIds, r.id]
-                          : recipientIds.filter((i) => i !== r.id),
-                      )
-                    }
-                  />
+            <div className="compose-audience-selectors">
+              <PickerDropdown
+                searchable
+                value=""
+                onChange={(recipientId) => setRecipientIds((current) => current.includes(recipientId) ? current : [...current, recipientId])}
+                placeholder="Add saved recipient"
+                icon={UsersRound}
+                ariaLabel="Add saved recipient"
+                searchPlaceholder="Search recipients"
+                options={(recipients.data?.items || []).filter((recipient) => !recipientIds.includes(recipient.id)).map((recipient) => ({ value: recipient.id, label: recipient.name || recipient.email, description: recipient.name ? recipient.email : [recipient.company, recipient.position].filter(Boolean).join(' · '), searchTerms: [recipient.email, recipient.company, recipient.position] }))}
+              />
+              <div className="compose-group-dropdown" ref={groupDropdownRef}>
+                <button
+                  type="button"
+                  className="compose-group-trigger"
+                  aria-haspopup="listbox"
+                  aria-expanded={groupsOpen}
+                  onClick={() => setGroupsOpen((open) => !open)}
+                >
                   <span>
-                    {r.name || r.email}
-                    <small>{r.name ? r.email : r.company}</small>
+                    <UsersRound size={15} />
+                    <span>Saved recipient groups</span>
                   </span>
-                  <span className="text-emerald-400">Available</span>
-                </label>
-              ))}
+                  <ChevronDown size={16} className={groupsOpen ? 'open' : ''} />
+                </button>
+                {groupsOpen && (
+                  <div className="compose-group-menu" role="listbox" aria-label="Saved recipient groups">
+                    <label className="picker-dropdown-search">
+                      <Search size={14} />
+                      <input
+                        autoFocus
+                        type="search"
+                        value={groupSearch}
+                        onChange={(event) => setGroupSearch(event.target.value)}
+                        placeholder="Search groups"
+                        aria-label="Search groups"
+                      />
+                    </label>
+                    <div className="compose-group-options">
+                      {recipientGroups.isPending && (
+                        <p className="picker-dropdown-empty" role="status">
+                          Loading saved groups…
+                        </p>
+                      )}
+                      {!recipientGroups.isPending &&
+                        visibleGroups.map((group) => {
+                          const allSelected = isGroupSelected(group);
+                          return (
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={allSelected}
+                              className={allSelected ? 'selected' : ''}
+                              key={group.id}
+                              onClick={() =>
+                                setRecipientIds((current) =>
+                                  allSelected
+                                    ? current.filter((id) => !group.recipient_ids.includes(id))
+                                    : [...new Set([...current, ...group.recipient_ids])],
+                                )
+                              }
+                            >
+                              <span>
+                                <strong>{group.name}</strong>
+                                <small>
+                                  {group.recipient_count}{' '}
+                                  {group.recipient_count === 1 ? 'recipient' : 'recipients'}
+                                </small>
+                              </span>
+                              {allSelected && <Check size={16} />}
+                            </button>
+                          );
+                        })}
+                      {!recipientGroups.isPending && !visibleGroups.length && (
+                        <p className="picker-dropdown-empty" role="status">
+                          {recipientGroups.isError
+                            ? 'Saved groups could not load. Try again in a moment.'
+                            : 'No matching groups'}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="flex gap-2 mt-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={recipientPage === 1}
-                onClick={() => setRecipientPage(recipientPage - 1)}
-              >
-                Previous
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={!recipients.data || recipientPage * 100 >= recipients.data.total}
-                onClick={() => setRecipientPage(recipientPage + 1)}
-              >
-                Next
-              </Button>
-            </div>
+            {!!selectedGroups.length && (
+              <div className="compose-selected-groups" aria-label="Selected recipient groups">
+                <span>Selected groups</span>
+                <div>
+                  {selectedGroups.map((group) => (
+                    <span className="compose-selected-group-chip" key={group.id}>
+                      <button type="button" onClick={() => setPreviewGroup(group)} aria-label={`Preview ${group.name}`}>
+                        {group.name}
+                      </button>
+                      <button
+                        type="button"
+                        className="compose-selected-group-remove"
+                        aria-label={`Remove ${group.name}`}
+                        onClick={() => setRecipientIds((current) => current.filter((id) => !group.recipient_ids.includes(id)))}
+                      >
+                        <X size={13} aria-hidden="true" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {!!selectedRecipients.length && <div className="compose-selected-recipients" aria-label="Selected saved recipients"><span>Selected recipients</span><div>{selectedRecipients.map((recipient) => <button type="button" key={recipient.id} onClick={() => setRecipientIds((current) => current.filter((id) => id !== recipient.id))}>{recipient.name || recipient.email}<X size={13} aria-hidden="true" /></button>)}</div></div>}
             <div className="form-grid mt-4">
               <Field label="CC (single-recipient campaign)">
                 <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="Optional" />
@@ -307,22 +437,34 @@ export default function Compose() {
           <section className="panel">
             <div className="panel-heading">
               <h3>Your message</h3>
-              <PickerDropdown
-                value={selectedTemplate}
-                onChange={(templateId) => {
-                  setSelectedTemplate(templateId);
-                  const t = (templates.data?.items || []).find((t) => t.id === templateId);
-                  if (t) {
-                    form.setValue('subject', t.subject);
-                    form.setValue('body', t.body);
-                  }
-                }}
-                placeholder="Use a template"
-                icon={FileText}
-                ariaLabel="Choose a message template"
-                className="template-picker"
-                options={(templates.data?.items || []).map((t) => ({ value: t.id, label: t.name, description: t.subject }))}
-              />
+              <div className="compose-message-tools">
+                <PickerDropdown
+                  searchable
+                  value={selectedTemplate}
+                  onChange={(templateId) => {
+                    setSelectedTemplate(templateId);
+                    const t = (templates.data?.items || []).find((t) => t.id === templateId);
+                    if (t) {
+                      form.setValue('subject', t.subject);
+                      form.setValue('body', t.body);
+                    }
+                  }}
+                  placeholder="Use a template"
+                  icon={FileText}
+                  ariaLabel="Choose a message template"
+                  className="template-picker"
+                  options={(templates.data?.items || []).map((t) => ({ value: t.id, label: t.name, description: t.subject }))}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="compose-ai-trigger"
+                  onClick={() => setAiOpen(true)}
+                >
+                  <Sparkles size={15} />
+                  Write with AI
+                </Button>
+              </div>
             </div>
             <Field label="Subject line" error={form.formState.errors.subject}>
               <input placeholder="A subject worth opening" {...form.register('subject')} />
@@ -350,6 +492,7 @@ export default function Compose() {
               onUploaded={(items) => setAttachments((prev) => [...prev, ...items])}
             />
             <PickerDropdown
+              searchable
               className="mt-3 workspace-file-picker"
               value=""
               onChange={(documentId) => {
@@ -380,46 +523,6 @@ export default function Compose() {
           </section>
         </div>
         <aside className="space-y-5">
-          <section className="panel ai-panel">
-            <div className="ai-panel-icon">
-              <Sparkles size={23} />
-            </div>
-            <h3>Your writing copilot</h3>
-            <p>Give your message clarity, personality, and purpose.</p>
-            <Field label="What would you like to do?">
-              <PickerDropdown
-                value={action}
-                onChange={setAction}
-                icon={Sparkles}
-                ariaLabel="What would you like to do?"
-                options={[
-                  ['generate', 'Generate email'], ['improve', 'Improve writing'], ['professional', 'Make professional'], ['shorten', 'Shorten email'], ['expand', 'Expand email'], ['grammar', 'Fix grammar'], ['subject', 'Generate subject'], ['personalize', 'Personalize email'],
-                ].map(([value, label]) => ({ value, label }))}
-              />
-            </Field>
-            <Field label="Tone">
-              <PickerDropdown
-                value={tone}
-                onChange={setTone}
-                icon={Sparkles}
-                ariaLabel="Tone"
-                options={['professional', 'formal', 'friendly', 'business'].map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) }))}
-              />
-            </Field>
-            <Field label="Instructions">
-              <textarea
-                rows={5}
-                value={instruction}
-                onChange={(e) => setInstruction(e.target.value)}
-                placeholder="Introduce our company and suggest a short partnership conversation…"
-              />
-            </Field>
-            <BusyButton type="button" className="w-full" busy={ai.isPending} onClick={() => ai.mutate()}>
-              <Sparkles size={16} />
-              Write with AI
-            </BusyButton>
-            <small>AI drafts always need your review.</small>
-          </section>
           <section className="panel outreach-drafts">
             <div className="panel-heading"><div><h3>Recent drafts</h3><p>Continue an unfinished campaign.</p></div></div>
             {drafts.data?.items.length ? drafts.data.items.map((draft) => <button key={draft.id} className={draft.id === editId ? 'active' : ''} onClick={() => navigate(`/compose?edit=${draft.id}`)}><span><strong>{draft.name}</strong><small>{draft.subject || 'No subject yet'}</small></span><ArrowRight size={15} /></button>) : <small>No saved drafts yet.</small>}
@@ -428,6 +531,69 @@ export default function Compose() {
       </div>
       <Dialog open={preview} onOpenChange={setPreview} title="Email preview">
         <EmailPreview subject={values.subject} body={values.body} />
+      </Dialog>
+      <Dialog
+        open={aiOpen}
+        onOpenChange={setAiOpen}
+        title="Write with AI"
+        description="Describe the email you want. AI only writes email copy for this campaign."
+      >
+        <div className="compose-ai-dialog">
+          <Field label="Instructions">
+            <textarea
+              rows={5}
+              value={instruction}
+              onChange={(e) => setInstruction(e.target.value)}
+              placeholder="e.g. Write a short partnership introduction and suggest a 15-minute call…"
+            />
+          </Field>
+          <div className="dialog-actions">
+            <Button type="button" variant="secondary" disabled={ai.isPending} onClick={() => setAiOpen(false)}>
+              Cancel
+            </Button>
+            <BusyButton type="button" busy={ai.isPending} onClick={() => ai.mutate()}>
+              <Sparkles size={16} />
+              Generate email
+            </BusyButton>
+          </div>
+        </div>
+      </Dialog>
+      <Dialog
+        open={!!previewGroup}
+        onOpenChange={(value) => !value && setPreviewGroup(null)}
+        title={previewGroup ? `${previewGroup.name} members` : 'Recipient group preview'}
+        description="A read-only view of the people in this saved recipient group."
+      >
+        <div className="group-preview" aria-label="Recipient group members">
+          <div className="group-preview-summary">
+            <span><UsersRound size={16} /></span>
+            <div>
+              <strong>{previewGroup?.recipient_count || 0} saved members</strong>
+              <small>Member details are private to this workspace.</small>
+            </div>
+          </div>
+          {(() => {
+            const members = getGroupPreviewMembers(previewGroup);
+            return members.length ? (
+              <div className="group-preview-members">
+                {members.map((member) => (
+                  <article key={member.id}>
+                    <span className="group-recipient-avatar">{(member.name || member.email).slice(0, 1).toUpperCase()}</span>
+                    <div>
+                      <strong>{member.name || member.email}</strong>
+                      <small><Mail size={12} /> {member.email}</small>
+                      {(member.company || member.position) && (
+                        <small><Building2 size={12} /> {[member.company, member.position].filter(Boolean).join(' · ')}</small>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <Empty title="No members available" description="This group has no active recipients to preview." />
+            );
+          })()}
+        </div>
       </Dialog>
       <ConfirmDialog
         open={sendOpen}

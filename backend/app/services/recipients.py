@@ -2,7 +2,7 @@
 from fastapi import HTTPException
 from sqlalchemy import select, delete, update, case
 from app.models.entities import (
-    Recipient, Campaign, CampaignRecipient, EmailMessage, EmailEvent, Consent, GroupMember,
+    Recipient, Campaign, CampaignRecipient, EmailMessage, EmailEvent, Consent, GroupMember, RecipientGroup,
 )
 from app.repositories.common import audit
 
@@ -47,10 +47,33 @@ def permanently_delete(db, user, identifiers):
         status=case((EmailMessage.status == 'queued', 'cancelled'), else_=EmailMessage.status),
         error=case((EmailMessage.status == 'queued', 'Recipient permanently deleted'), else_=EmailMessage.error),
     ))
+    affected_group_ids = set(db.scalars(select(GroupMember.group_id).where(
+        GroupMember.organization_id == user.organization_id,
+        GroupMember.recipient_id.in_(ids),
+    )))
     for model in (CampaignRecipient, GroupMember, Consent):
         db.execute(delete(model).where(model.organization_id == user.organization_id, model.recipient_id.in_(ids)))
+    auto_deleted_groups = []
+    if affected_group_ids:
+        remaining_group_ids = set(db.scalars(select(GroupMember.group_id).where(
+            GroupMember.organization_id == user.organization_id,
+            GroupMember.group_id.in_(affected_group_ids),
+        )))
+        empty_group_ids = affected_group_ids - remaining_group_ids
+        if empty_group_ids:
+            empty_groups = list(db.scalars(select(RecipientGroup).where(
+                RecipientGroup.organization_id == user.organization_id,
+                RecipientGroup.id.in_(empty_group_ids),
+            )))
+            auto_deleted_groups = [{"id": group.id, "name": group.name} for group in empty_groups]
+            db.execute(delete(RecipientGroup).where(
+                RecipientGroup.organization_id == user.organization_id,
+                RecipientGroup.id.in_(empty_group_ids),
+            ))
+            for group in auto_deleted_groups:
+                audit(db, user, 'recipient_group.auto_deleted', group['id'], {'reason': 'no_members'})
     db.execute(delete(Recipient).where(Recipient.organization_id == user.organization_id, Recipient.id.in_(ids)))
     for identifier in ids:
         audit(db, user, 'recipient.deleted', identifier, {'permanent': True})
     db.commit()
-    return {'ok': True, 'deleted': len(ids)}
+    return {'ok': True, 'deleted': len(ids), 'auto_deleted_groups': auto_deleted_groups}

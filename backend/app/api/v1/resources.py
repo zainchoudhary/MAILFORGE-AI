@@ -129,7 +129,38 @@ def recipients(
     if q:
         conditions.append(Recipient.email.ilike(f"%{q}%") | Recipient.name.ilike(f"%{q}%"))
     result = page(db, Recipient, user.organization_id, page_number, limit, conditions)
+    recipient_ids = [item["id"] for item in result["items"]]
+    memberships = {recipient_id: [] for recipient_id in recipient_ids}
+    if recipient_ids:
+        for recipient_id, group_id, group_name in db.execute(
+            select(GroupMember.recipient_id, RecipientGroup.id, RecipientGroup.name)
+            .join(RecipientGroup, RecipientGroup.id == GroupMember.group_id)
+            .where(
+                GroupMember.organization_id == user.organization_id,
+                GroupMember.recipient_id.in_(recipient_ids),
+            )
+            .order_by(RecipientGroup.name)
+        ):
+            memberships[recipient_id].append({"id": group_id, "name": group_name})
+    for item in result["items"]:
+        item["recipient_groups"] = memberships[item["id"]]
     return result
+
+
+@router.get("/recipients/{identifier}/groups", tags=["Recipients"])
+def recipient_group_memberships(identifier: str, user=Depends(current_user), db=Depends(get_db)):
+    recipient = owned(db, Recipient, identifier, user.organization_id)
+    groups = list(db.scalars(
+        select(RecipientGroup)
+        .join(GroupMember, GroupMember.group_id == RecipientGroup.id)
+        .where(
+            RecipientGroup.organization_id == user.organization_id,
+            GroupMember.organization_id == user.organization_id,
+            GroupMember.recipient_id == recipient.id,
+        )
+        .order_by(RecipientGroup.name)
+    ))
+    return {"items": [{"id": group.id, "name": group.name} for group in groups]}
 
 
 def group_payloads(db, organization_id):
@@ -142,15 +173,26 @@ def group_payloads(db, organization_id):
     if not groups:
         return []
     member_ids = {group.id: [] for group in groups}
-    for group_id, recipient_id in db.execute(
-        select(GroupMember.group_id, GroupMember.recipient_id).where(
+    member_summaries = {group.id: [] for group in groups}
+    for group_id, recipient in db.execute(
+        select(GroupMember.group_id, Recipient)
+        .join(Recipient, Recipient.id == GroupMember.recipient_id)
+        .where(
             GroupMember.organization_id == organization_id,
             GroupMember.group_id.in_(member_ids),
-        )
+            Recipient.organization_id == organization_id,
+            Recipient.deleted.is_(False),
+        ).order_by(Recipient.name, Recipient.email)
     ):
-        member_ids[group_id].append(recipient_id)
+        member_ids[group_id].append(recipient.id)
+        member_summaries[group_id].append(serialize(recipient))
     return [
-        {**serialize(group), "recipient_ids": member_ids[group.id], "recipient_count": len(member_ids[group.id])}
+        {
+            **serialize(group),
+            "recipient_ids": member_ids[group.id],
+            "recipient_members": member_summaries[group.id],
+            "recipient_count": len(member_ids[group.id]),
+        }
         for group in groups
     ]
 
@@ -172,6 +214,23 @@ def validate_group_members(db, user, identifiers):
 @router.get("/recipient-groups", tags=["Recipient groups"])
 def recipient_groups(user=Depends(current_user), db=Depends(get_db)):
     return {"items": group_payloads(db, user.organization_id)}
+
+
+@router.get("/recipient-groups/{identifier}/members", tags=["Recipient groups"])
+def recipient_group_members(identifier: str, user=Depends(current_user), db=Depends(get_db)):
+    group = owned(db, RecipientGroup, identifier, user.organization_id)
+    members = list(db.scalars(
+        select(Recipient)
+        .join(GroupMember, GroupMember.recipient_id == Recipient.id)
+        .where(
+            Recipient.organization_id == user.organization_id,
+            Recipient.deleted.is_(False),
+            GroupMember.organization_id == user.organization_id,
+            GroupMember.group_id == group.id,
+        )
+        .order_by(Recipient.name, Recipient.email)
+    ))
+    return {"items": [serialize(member) for member in members], "total": len(members)}
 
 
 @router.post("/recipient-groups", tags=["Recipient groups"], status_code=201)

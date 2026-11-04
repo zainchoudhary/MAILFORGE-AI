@@ -2,22 +2,19 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowUpRight,
-  Check,
   CheckCheck,
   Copy,
   Download,
   Eye,
   FileText,
-  Pause,
-  Play,
   Plus,
   Search,
-  ShieldCheck,
+  Send,
   X,
   Trash2,
   CheckCircle2,
-  Loader2,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useApi, useAction } from '../hooks/useApi';
 import { api, downloadFile } from '../services/api';
 import {
@@ -26,9 +23,9 @@ import {
   Empty,
   Status,
   Pagination,
-  BusyButton,
   dateLabel,
   ConfirmDialog,
+  BusyButton,
   PickerDropdown,
 } from '../components/Common';
 import { Button } from '../components/ui/button';
@@ -167,63 +164,65 @@ export function CampaignDetail() {
   const navigate = useNavigate();
   const query = useApi(`/campaigns/${id}`, { refetchInterval: 2000 });
   const previews = useApi(`/campaigns/${id}/preview`);
-  const templates = useApi('/templates');
-  const me = useApi('/auth/me');
   const [preview, setPreview] = useState(null);
-  const [approval, setApproval] = useState(false);
-  const [approved, setApproved] = useState(false);
-  const [result, setResult] = useState(null);
-  const [cancelOpen, setCancelOpen] = useState(false);
-  const [testSent, setTestSent] = useState(false);
-  const [approvalStarting, setApprovalStarting] = useState(false);
-  useEffect(() => {
-    if (query.data?.status && query.data.status !== 'draft') setApprovalStarting(false);
-  }, [query.data?.status]);
-  const action = useAction(async (name) => {
-    const { data } = await api.post(
-      `/campaigns/${id}/${name}`,
-      ['review', 'approve'].includes(name)
-        ? { revision: query.data.revision, confirm: true }
-        : undefined,
-    );
-    if (name === 'dry-run') setResult(data);
-    if (name === 'duplicate') navigate(`/campaigns/${data.id}`);
-  }, 'Campaign updated', {
-    onSuccess: () => setApproval(false),
-    onError: () => setApprovalStarting(false),
+  const [sendOpen, setSendOpen] = useState(false);
+  const duplicate = useAction(async () => {
+    const { data } = await api.post(`/campaigns/${id}/duplicate`);
+    navigate(`/campaigns/${data.id}`);
+    return data;
+  }, 'Campaign duplicated', {
+    invalidatePrefixes: ['/campaigns'],
+    awaitRefetch: false,
   });
-  const test = useAction(
-    () => api.post('/emails/send-test', { campaign_id: id, recipient: me.data.email }),
-    'Test request recorded; inspect the test campaign for its outcome',
-  );
   const exportAction = useAction(
     () => downloadFile(`/campaigns/${id}/report`, `${query.data.name}.csv`),
     'Report downloaded',
   );
-  const assign = useAction(async ({ recipientId, templateId }) => {
-    const c = query.data;
-    await api.put(`/campaigns/${id}`, {
-      name: c.name,
-      description: c.description,
-      subject: c.subject,
-      body: c.body,
-      smtp_account_id: c.smtp_account_id,
-      cc: c.cc,
-      bcc: c.bcc,
-      scheduled_at: c.scheduled_at,
-      recipient_ids: c.recipients.map((r) => r.id),
-      attachment_ids: c.attachments.map((a) => a.id),
-      recipient_templates: Object.fromEntries(
-        c.recipients
-          .map((r) => [r.id, r.id === recipientId ? templateId : r.template_id])
-          .filter(([, t]) => t),
-      ),
-    });
-  }, 'Recipient template updated; review and dry-run again');
+  const send = useAction(async () => {
+    const campaign = query.data;
+    return (
+      await api.post(`/campaigns/${id}/approve`, {
+        revision: campaign.revision,
+        confirm: true,
+      })
+    ).data;
+  }, '', {
+    invalidatePrefixes: ['/campaigns', '/analytics', '/recipients', '/emails'],
+    awaitRefetch: false,
+    onSuccess: async () => {
+      setSendOpen(false);
+      // Approve returns a compact campaign record. Always refetch the full
+      // detail shape before rendering live progress (counts, recipients, and
+      // attachments), otherwise the route can crash on a partial cache value.
+      await query.refetch();
+      toast.success('Campaign delivery has started. Live progress is shown below.');
+    },
+  });
+  useEffect(() => {
+    // Toast only after Compose navigates here, so it never appears on the compose screen first.
+    const key = `mf_delivery_toast_${id}`;
+    if (!sessionStorage.getItem(key)) return undefined;
+    sessionStorage.removeItem(key);
+    const timer = window.setTimeout(() => {
+      toast.success('Campaign delivery has started. Live progress is shown below.');
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [id]);
   return (
     <QueryState query={query}>
-      {(c) => (
-        <>
+      {(data) => {
+        // A route may render once from a transient cache value while its full
+        // detail query is refetching. Keep that first paint safe instead of
+        // letting optional collections crash the entire workspace route.
+        const c = {
+          ...data,
+          recipients: Array.isArray(data?.recipients) ? data.recipients : [],
+          counts: data?.counts || {},
+          attachments: Array.isArray(data?.attachments) ? data.attachments : [],
+          cc: Array.isArray(data?.cc) ? data.cc : [],
+          bcc: Array.isArray(data?.bcc) ? data.bcc : [],
+        };
+        return <>
           <PageHeader
             eyebrow="CAMPAIGN WORKSPACE"
             title={c.name}
@@ -232,18 +231,38 @@ export function CampaignDetail() {
             backLabel="Back to campaigns"
           >
             <Status value={c.status} />
-            <Button variant="secondary" onClick={() => action.mutate('duplicate')}>
+            <BusyButton
+              variant="secondary"
+              busy={duplicate.isPending}
+              disabled={duplicate.isPending}
+              onClick={() => duplicate.mutate()}
+            >
               <Copy size={15} />
-              Duplicate
-            </Button>
+              {duplicate.isPending ? 'Duplicating…' : 'Duplicate'}
+            </BusyButton>
             <Button variant="secondary" onClick={() => exportAction.mutate()}>
               <Download size={15} />
               Report
             </Button>
             {c.status === 'draft' && (
-              <Button asChild>
-                <Link to={`/compose?edit=${id}`}>Edit draft</Link>
-              </Button>
+              <>
+                <Button variant="secondary" asChild>
+                  <Link to={`/compose?edit=${id}`}>Edit draft</Link>
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (!c.smtp_account_id) {
+                      toast.error('Select a tested SMTP account');
+                      return;
+                    }
+                    setSendOpen(true);
+                  }}
+                  disabled={send.isPending || !c.recipients.length}
+                >
+                  <Send size={15} />
+                  Send campaign
+                </Button>
+              </>
             )}
           </PageHeader>
           <div className="stat-grid">
@@ -311,8 +330,12 @@ export function CampaignDetail() {
               <section className="panel">
                 <div className="panel-heading">
                   <div>
-                    <h3>{c.status === 'draft' ? 'Recipient review' : 'Campaign participants'}</h3>
-                    <p>{c.status === 'draft' ? 'Only selected, active recipients can be approved.' : 'Every delivery recipient is retained here, including historical contact snapshots.'}</p>
+                    <h3>{c.status === 'draft' ? 'Recipients' : 'Campaign participants'}</h3>
+                    <p>
+                      {c.status === 'draft'
+                        ? 'Read-only preview. Use Edit draft to change recipients or message, or Send campaign to deliver.'
+                        : 'Every delivery recipient is retained here, including historical contact snapshots.'}
+                    </p>
                   </div>
                   <span className="period-chip">Revision {c.revision}</span>
                 </div>
@@ -334,39 +357,19 @@ export function CampaignDetail() {
                               <strong>{r.name || r.email}</strong>
                               <small>{r.email}</small>
                             </td>
-                            <td>
-                              {c.status === 'draft' ? (
-                                <select
-                                  aria-label={`Template for ${r.email}`}
-                                  value={r.template_id || ''}
-                                  disabled={assign.isPending}
-                                  onChange={(e) =>
-                                    assign.mutate({ recipientId: r.id, templateId: e.target.value })
-                                  }
-                                >
-                                  <option value="">Campaign message</option>
-                                  {templates.data?.items.map((t) => (
-                                    <option key={t.id} value={t.id}>
-                                      {t.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : r.template_id ? (
-                                'Custom template'
-                              ) : (
-                                'Campaign message'
-                              )}
-                            </td>
+                            <td>{r.template_id ? 'Custom template' : 'Campaign message'}</td>
                             <td>
                               {r.historical ? (
                                 <span className="period-chip">Delivery snapshot · {r.delivery_status}</span>
                               ) : (
                                 <Status
                                   value={
-                                    previews.data?.items.find((p) => p.recipient_id === r.id)
-                                      ?.eligible
+                                    previews.isLoading || previews.isPending
                                       ? 'ready'
-                                      : 'unavailable'
+                                      : previews.data?.items.find((p) => p.recipient_id === r.id)
+                                            ?.eligible === false
+                                        ? 'unavailable'
+                                        : 'ready'
                                   }
                                 />
                               )}
@@ -395,7 +398,7 @@ export function CampaignDetail() {
                 ) : (
                   <Empty
                     title="No recipients selected"
-                    description="Edit the draft to choose recipients."
+                    description="Edit the draft to choose recipients before sending."
                   />
                 )}
                 {previews.isError && (
@@ -404,6 +407,9 @@ export function CampaignDetail() {
               </section>
               <section className="panel">
                 <h3 className="mb-4">Campaign message</h3>
+                {c.status === 'draft' && (
+                  <p className="mb-4 text-sm opacity-70">Read-only. Open Edit draft to change the subject or body.</p>
+                )}
                 <EmailPreview subject={c.subject} body={c.body} />
                 {c.attachments.map((a) => (
                   <div className="file-row" key={a.id}>
@@ -426,91 +432,6 @@ export function CampaignDetail() {
               </Button>
             </div>
             <aside className="space-y-5">
-              <section className="panel approval-panel">
-                <ShieldCheck className="text-cyan-300 mb-4" size={28} />
-                <h3>Controlled delivery</h3>
-                <p>Review. Test. Approve. Every step is recorded.</p>
-                {c.status === 'draft' && (
-                  <>
-                  <div className="approval-actions mt-5">
-                    <button
-                      type="button"
-                      className="approval-step approval-step-action"
-                      disabled={c.reviewed_revision === c.revision || (action.isPending && action.variables === 'review')}
-                      onClick={() => action.mutate('review')}
-                    >
-                      <span className={c.reviewed_revision === c.revision ? 'done' : ''}>
-                        {action.isPending && action.variables === 'review' ? <Loader2 className="animate-spin" size={15} /> : c.reviewed_revision === c.revision ? <Check size={15} /> : 1}
-                      </span>
-                      <div><strong>Confirm recipient review</strong><small>Click the circle to confirm</small></div>
-                    </button>
-                    <button
-                      type="button"
-                      className="approval-step approval-step-action"
-                      disabled={c.reviewed_revision !== c.revision || c.dry_run_revision === c.revision || (action.isPending && action.variables === 'dry-run')}
-                      onClick={() => action.mutate('dry-run')}
-                    >
-                      <span className={c.dry_run_revision === c.revision ? 'done' : ''}>
-                        {action.isPending && action.variables === 'dry-run' ? <Loader2 className="animate-spin" size={15} /> : c.dry_run_revision === c.revision ? <Check size={15} /> : 2}
-                      </span>
-                      <div><strong>Run safe test</strong><small>Validate without sending</small></div>
-                    </button>
-                    <button
-                      type="button"
-                      className="approval-step approval-step-action"
-                      disabled={c.dry_run_revision !== c.revision || testSent || test.isPending}
-                      onClick={() => test.mutate(undefined, { onSuccess: () => setTestSent(true) })}
-                    >
-                      <span className={testSent ? 'done' : ''}>
-                        {test.isPending ? <Loader2 className="animate-spin" size={15} /> : testSent ? <Check size={15} /> : 3}
-                      </span>
-                      <div><strong>Send test to my account</strong><small>{testSent ? 'Test completed' : 'Optional final check'}</small></div>
-                    </button>
-                  </div>
-                  <div className="space-y-3 mt-5">
-                    <Button
-                      className="w-full"
-                      disabled={approvalStarting || c.reviewed_revision !== c.revision || c.dry_run_revision !== c.revision}
-                      onClick={() => {
-                        setApproved(false);
-                        setApproval(true);
-                      }}
-                    >
-                      Approve campaign <ArrowUpRight size={15} />
-                    </Button>
-                  </div>
-                  </>
-                )}
-                {['processing', 'sending', 'scheduled'].includes(c.status) && (
-                  <Button className="w-full mt-4" onClick={() => action.mutate('pause')}>
-                    <Pause size={16} />
-                    Pause
-                  </Button>
-                )}
-                {c.status === 'paused' && (
-                  <Button onClick={() => action.mutate('resume')}>
-                    <Play size={16} />
-                    Resume
-                  </Button>
-                )}
-                {['failed', 'partially_completed'].includes(c.status) && (
-                  <Button onClick={() => action.mutate('retry')}>Retry eligible failures</Button>
-                )}
-                {['draft', 'processing', 'sending', 'scheduled', 'paused'].includes(c.status) && (
-                  <Button
-                    className="w-full mt-3"
-                    variant="ghost"
-                    onClick={() => {
-                      setCancelOpen(true);
-                    }}
-                  >
-                    Cancel campaign
-                  </Button>
-                )}
-                <small className="block mt-4">
-                  Pause and cancel stop queued messages. In-flight SMTP transactions may complete.
-                </small>
-              </section>
               <section className="panel">
                 <h3>Timeline</h3>
                 {[
@@ -526,19 +447,6 @@ export function CampaignDetail() {
                   </div>
                 ))}
               </section>
-              {result && (
-                <section className="panel">
-                  <Status value="dry_run" />
-                  <p className="mt-3">
-                    {result.items.length} personalized messages validated. Zero emails sent.
-                  </p>
-                  {result.warnings.map((w) => (
-                    <p key={w} className="text-amber-300">
-                      {w}
-                    </p>
-                  ))}
-                </section>
-              )}
             </aside>
           </div>
           <Dialog open={!!preview} onOpenChange={() => setPreview(null)} title="Personalized email">
@@ -550,41 +458,20 @@ export function CampaignDetail() {
               />
             )}
           </Dialog>
-          <Dialog open={approval} onOpenChange={setApproval} busy={action.isPending} title="Approve production delivery">
-            <p className="my-5">
-              This authorizes delivery to {c.recipients.length} selected recipients. The server will
-              enforce recipient availability, suppression, SMTP, and dry-run checks.
-            </p>
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={approved}
-                onChange={(e) => setApproved(e.target.checked)}
-              />
-              I reviewed the recipients and messages and approve this campaign.
-            </label>
-            <BusyButton
-              className="mt-5"
-              busy={action.isPending}
-              disabled={!approved}
-              onClick={() => {
-                setApprovalStarting(true);
-                action.mutate('approve');
-              }}
-            >
-              {approvalStarting || action.isPending ? 'Processing…' : 'Approve and queue'}
-            </BusyButton>
-          </Dialog>
-          <ConfirmDialog
-            open={cancelOpen}
-            onOpenChange={setCancelOpen}
-            title="Cancel campaign delivery"
-            confirmLabel="Cancel delivery"
-            message="Cancel queued delivery? Messages already being sent cannot be recalled."
-            onConfirm={() => action.mutateAsync('cancel')}
-          />
-        </>
-      )}
+          {c.status === 'draft' && (
+            <ConfirmDialog
+              open={sendOpen}
+              onOpenChange={setSendOpen}
+              title="Send campaign"
+              itemLabel={`${c.recipients.length} selected recipients`}
+              message={<>Your campaign will be sent to the selected recipients. After you continue, you’ll see each email’s live delivery status.</>}
+              confirmLabel="Review and send"
+              processingLabel="Preparing delivery…"
+              onConfirm={() => send.mutateAsync()}
+            />
+          )}
+        </>;
+      }}
     </QueryState>
   );
 }

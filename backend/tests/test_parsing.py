@@ -1,5 +1,3 @@
-from pathlib import Path
-import shutil
 import pytest
 from app.document_processing.parser import extract_recipients, read_document
 from app.schemas.inputs import TemplateInput
@@ -11,6 +9,24 @@ def test_email_validation_and_deduplication():
     )
     assert [r["email"] for r in records] == ["alex@example.com", "valid+tag@company.org"]
     assert duplicates == 1
+
+
+def test_common_spreadsheet_headers_map_to_recipient_fields():
+    records, _ = extract_recipients("", [{
+        "work email": "alex@example.com",
+        "full name": "Alex Morgan",
+        "organization": "Northstar Labs",
+        "job title": "Product Designer",
+        "linkedin": "https://linkedin.com/in/alex-morgan",
+    }])
+
+    assert records == [{
+        "email": "alex@example.com",
+        "name": "Alex Morgan",
+        "company": "Northstar Labs",
+        "position": "Product Designer",
+        "custom_fields": {"linkedin": "https://linkedin.com/in/alex-morgan"},
+    }]
 
 
 def test_html_sanitization_and_header_injection():
@@ -75,18 +91,7 @@ def test_xml_external_entities_rejected(tmp_path):
         read_document(path, ".xml")
 
 
-@pytest.mark.skipif(not shutil.which("tesseract"), reason="Tesseract native binary is required")
-def test_real_ocr(tmp_path):
-    from PIL import Image, ImageDraw, ImageFont
-
-    image = Image.new("RGB", (1000, 150), "white")
-    font = (
-        ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 40)
-        if Path("/System/Library/Fonts/Supplemental/Arial.ttf").exists()
-        else ImageFont.truetype("DejaVuSans.ttf", 40)
-    )
-    ImageDraw.Draw(image).text((30, 40), "alex@example.com", font=font, fill="black")
-    path = tmp_path / "contacts.png"
-    image.save(path)
-    text, rows = read_document(path, ".png")
-    assert extract_recipients(text, rows)[0][0]["email"] == "alex@example.com"
+def test_images_are_not_ocr_contact_sources(tmp_path):
+    path = tmp_path / "attachment.png"
+    path.write_bytes(b"attachment-content")
+    assert read_document(path, ".png") == ("", [])

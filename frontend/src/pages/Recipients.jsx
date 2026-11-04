@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { FileScan, Plus, Pencil, Trash2, Loader2, Users, Upload, Mail, Building2, ListChecks } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { useApi, useAction } from '../hooks/useApi';
 import { api } from '../services/api';
 import {
@@ -19,8 +20,9 @@ import {
 } from '../components/Common';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
+import { RecipientImportTemplateButton } from '../components/RecipientImportTemplateButton';
 import { toast } from 'sonner';
-import { reviewRows, importReviewedRecipients, importSummary } from '../services/recipientImport';
+import { reviewRows, importReviewedRecipients, importSummary, startExtractionForUploadedDocument } from '../services/recipientImport';
 const schema = z.object({
   email: z.string().email(),
   name: z.string().trim().min(1, 'Name is required'),
@@ -29,6 +31,7 @@ const schema = z.object({
 });
 export default function Recipients() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(null);
@@ -41,6 +44,7 @@ export default function Recipients() {
   const [uploadBusy, setUploadBusy] = useState(false);
   const [importDocument, setImportDocument] = useState(null);
   const [importRows, setImportRows] = useState(null);
+  const recipientGroups = useApi('/recipient-groups');
   const extraction = useApi(`/documents/${importDocument?.id}/recipients`, {
     enabled: !!importDocument,
     refetchInterval: (query) =>
@@ -72,24 +76,49 @@ export default function Recipients() {
     const items = data.items.filter((recipient) => !ids.includes(recipient.id));
     return { ...data, items, total: Math.max(0, data.total - (data.items.length - items.length)) };
   };
-  const remove = useAction((id) => api.delete(`/recipients/${id}`), 'Recipient removed', {
-    invalidatePrefixes: ['/recipients'],
+  const removeFromGroupCache = (ids) => (data) => {
+    if (!data?.items) return data;
+    return {
+      ...data,
+      items: data.items
+        .map((group) => {
+          const recipient_ids = (group.recipient_ids || []).filter((id) => !ids.includes(id));
+          return { ...group, recipient_ids, recipient_count: recipient_ids.length };
+        })
+        .filter((group) => group.recipient_count > 0),
+    };
+  };
+  const removalSummary = (data, fallback) => {
+    const removedGroups = data?.data?.auto_deleted_groups || data?.auto_deleted_groups || [];
+    return removedGroups.length
+      ? `${fallback}. ${removedGroups.length} empty recipient group${removedGroups.length === 1 ? '' : 's'} removed too.`
+      : fallback;
+  };
+  const renderGroupMemberships = (membershipQuery, deleting, plural = false) => membershipQuery.isPending ? <p className="confirm-membership-loading">Checking recipient groups…</p> : membershipQuery.data?.items?.length ? <div className="confirm-linked-groups">
+    <strong>Also in {membershipQuery.data.items.length} recipient group{membershipQuery.data.items.length === 1 ? '' : 's'}</strong>
+    <p>Removing {plural ? 'these recipients' : 'this recipient'} also removes them from these saved groups. A group with no members is deleted automatically.</p>
+    <div>{membershipQuery.data.items.map((group) => <Button key={group.id} type="button" variant="secondary" size="sm" disabled={deleting} onClick={() => { setDeleteTarget(null); setBulkDeleteOpen(false); navigate('/recipient-groups', { state: { openGroupId: group.id } }); }}>View {group.name}</Button>)}</div>
+  </div> : <p>{plural ? 'These recipients are' : 'This recipient is'} not in any saved recipient group.</p>;
+  const remove = useAction((id) => api.delete(`/recipients/${id}`), (data) => {
+    return removalSummary(data, 'Recipient removed');
+  }, {
+    invalidatePrefixes: ['/recipients', '/recipient-groups'],
     awaitRefetch: false,
-    onConfirmed: (_, id, __, client) => client.setQueriesData(
-      { predicate: (item) => typeof item.queryKey[0] === 'string' && item.queryKey[0].startsWith('/recipients') },
-      removeFromCache([id]),
-    ),
+    onConfirmed: (_, id, __, client) => {
+      client.setQueriesData({ predicate: (item) => typeof item.queryKey[0] === 'string' && item.queryKey[0].startsWith('/recipients') }, removeFromCache([id]));
+      client.setQueriesData({ queryKey: ['/recipient-groups'] }, removeFromGroupCache([id]));
+    },
   });
   const bulkRemove = useAction(
     (ids) => api.post('/recipients/bulk-delete', { recipient_ids: ids }),
-    'Recipients removed',
+    (data) => removalSummary(data, 'Recipients removed'),
     {
-      invalidatePrefixes: ['/recipients'],
+      invalidatePrefixes: ['/recipients', '/recipient-groups'],
       awaitRefetch: false,
-      onConfirmed: (_, ids, __, client) => client.setQueriesData(
-        { predicate: (item) => typeof item.queryKey[0] === 'string' && item.queryKey[0].startsWith('/recipients') },
-        removeFromCache(ids),
-      ),
+      onConfirmed: (_, ids, __, client) => {
+        client.setQueriesData({ predicate: (item) => typeof item.queryKey[0] === 'string' && item.queryKey[0].startsWith('/recipients') }, removeFromCache(ids));
+        client.setQueriesData({ queryKey: ['/recipient-groups'] }, removeFromGroupCache(ids));
+      },
     },
   );
   const extractDocument = useAction(async (document) => {
@@ -120,6 +149,15 @@ export default function Recipients() {
   const updateImportRow = (index, key, value) =>
     setImportRows(extractedRows.map((row, rowIndex) => (rowIndex === index ? { ...row, [key]: value } : row)));
   const contactsOnPage = query.data?.items || [];
+  const groupMemberships = { isPending: false, data: { items: deleteTarget?.recipient_groups || [] } };
+  const bulkGroupMemberships = {
+    isPending: recipientGroups.isPending,
+    data: {
+      items: (recipientGroups.data?.items || []).filter((group) =>
+        group.recipient_ids?.some((id) => selectedIds.includes(id)),
+      ),
+    },
+  };
   const companyCount = new Set(contactsOnPage.map((recipient) => recipient.company).filter(Boolean)).size;
   return (
     <>
@@ -185,7 +223,7 @@ export default function Recipients() {
               if (selectionMode) setSelectedIds([]);
             }}
           >
-            {selectionMode ? 'Done selecting' : 'Select multiple'}
+            {selectionMode ? 'Cancel' : 'Select multiple'}
           </Button>}
           {query.data?.total > 0 && selectionMode && (
             <Button
@@ -213,7 +251,7 @@ export default function Recipients() {
             open={bulkDeleteOpen}
             onOpenChange={setBulkDeleteOpen}
               title="Delete selected recipients"
-              message={`This will remove ${selectedIds.length} selected recipient${selectedIds.length === 1 ? '' : 's'} from your library.`}
+              message={<><p>This will permanently remove {selectedIds.length} selected recipient{selectedIds.length === 1 ? '' : 's'} from your library.</p>{renderGroupMemberships(bulkGroupMemberships, bulkRemove.isPending, true)}</>}
               confirmLabel="Delete selected"
               onConfirm={() => bulkRemove.mutateAsync(selectedIds).then(() => setSelectedIds([]))}
           />
@@ -315,6 +353,9 @@ export default function Recipients() {
         </QueryState>
       </section>
       <Dialog open={importOpen} onOpenChange={setImportOpen} busy={uploadBusy || extractDocument.isPending || importRecipients.isPending} title="Import recipients from Excel">
+        <div className="flex justify-end -mt-1">
+          <RecipientImportTemplateButton />
+        </div>
         <p className="my-4">
           Upload an Excel contact list (.xlsx or .xls). Review the extracted names and email addresses before saving.
         </p>
@@ -326,13 +367,9 @@ export default function Recipients() {
             allowedExtensions={['.xlsx', '.xls']}
             label="Choose Excel file"
             description="Excel files only (.xlsx or .xls) · up to 18 MB"
+            successMessage={null}
             onBusyChange={setUploadBusy}
-            onUploaded={(items) => {
-              if (items[0]) {
-                setImportDocument(items[0]);
-                setImportRows(null);
-              }
-            }}
+            onUploaded={(items) => startExtractionForUploadedDocument(items, extractDocument.mutate)}
           />
         )}
         {importDocument && (
@@ -344,14 +381,14 @@ export default function Recipients() {
               </div>
               <Status value={extraction.data?.status || 'not_started'} />
             </div>
-            {(extracting || !extraction.data || ['not_started', 'failed'].includes(extraction.data.status)) && (
+            {extraction.data?.status === 'failed' && (
               <div className="flex justify-end mt-4">
                 <BusyButton
-                  busy={extracting}
+                  busy={extractDocument.isPending}
                   onClick={() => extractDocument.mutate(importDocument)}
                 >
                   <FileScan size={15} />
-                  {extracting ? extractionLabel : extraction.data?.status === 'failed' ? 'Retry extraction' : 'Extract contacts'}
+                  Retry extraction
                 </BusyButton>
               </div>
             )}
@@ -399,7 +436,7 @@ export default function Recipients() {
                 </table>
               </div>
             ) : !extracting && (
-              <Empty title={extraction.data?.status === 'completed' ? 'No email addresses found' : ['pending', 'processing'].includes(extraction.data?.status) ? 'Analyzing document…' : 'Click Extract contacts to begin'} description="Only reviewed records will be added to your recipient library." />
+              <Empty title={extraction.data?.status === 'completed' ? 'No email addresses found' : 'Preparing your contact review'} description="Only reviewed records will be added to your recipient library." />
             )}
             <div className="flex justify-between mt-5 gap-3">
               <Button variant="ghost" disabled={extracting} onClick={() => { setImportDocument(null); setImportRows(null); }}>Choose another file</Button>
@@ -414,6 +451,10 @@ export default function Recipients() {
         open={!!deleteTarget}
         itemLabel={deleteTarget?.email}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
+        message={<>
+          <p>Delete <strong>{deleteTarget?.name || deleteTarget?.email}</strong> permanently from your recipient library?</p>
+          {renderGroupMemberships(groupMemberships, remove.isPending)}
+        </>}
         onConfirm={() => remove.mutateAsync(deleteTarget.id)}
       />
       <Dialog

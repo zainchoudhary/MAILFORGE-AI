@@ -4,6 +4,14 @@ export function reviewRows(edits, extraction) {
   return edits ?? extraction?.records ?? [];
 }
 
+// An Excel upload is immediately handed to the extraction worker. Keeping this
+// small transition here makes the upload-to-review flow consistent wherever it
+// is used and prevents a second, unnecessary "Extract" action from the user.
+export function startExtractionForUploadedDocument(documents, startExtraction) {
+  const document = documents?.[0];
+  if (document) startExtraction(document);
+}
+
 export async function importReviewedRecipients(rows) {
   const selected = rows.filter((row) => row.selected !== false);
   if (!selected.length) throw new Error('Select at least one recipient to import.');

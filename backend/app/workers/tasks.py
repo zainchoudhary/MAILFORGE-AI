@@ -24,47 +24,111 @@ from app.services.campaigns import eligible
 from app.integrations.smtp import send
 
 logger = logging.getLogger(__name__)
+DELIVERY_ENQUEUE_TTL_SECONDS = 300
+DISPATCH_LOCK_TTL_SECONDS = 30
+
+
+def delivery_enqueue_key(identifier):
+    return f"delivery-enqueued:{identifier}"
+
+
+def delivery_enqueue_limiter():
+    return Redis.from_url(get_settings().redis_url)
+
+
+def claim_dispatch_lock():
+    return delivery_enqueue_limiter().set(
+        "delivery-dispatch-lock",
+        "running",
+        nx=True,
+        ex=DISPATCH_LOCK_TTL_SECONDS,
+    )
+
+
+def release_dispatch_lock():
+    delivery_enqueue_limiter().delete("delivery-dispatch-lock")
+
+
+def enqueue_deliveries(pending):
+    """Queue each delivery once; beat can safely revisit queued DB rows."""
+    by_organization = defaultdict(list)
+    for identifier, organization_id in pending:
+        by_organization[organization_id].append(identifier)
+    interval = max(0.0, float(get_settings().delay_between_emails))
+    limiter = delivery_enqueue_limiter()
+    for identifiers in by_organization.values():
+        for position, identifier in enumerate(identifiers):
+            if not limiter.set(
+                delivery_enqueue_key(identifier),
+                "queued",
+                nx=True,
+                ex=DELIVERY_ENQUEUE_TTL_SECONDS,
+            ):
+                continue
+            deliver.apply_async(
+                args=[identifier],
+                countdown=(position * interval) if interval else 0,
+            )
+
+
+def queue_campaign_delivery(campaign_id):
+    """Kick off one campaign's queued messages without waiting for beat."""
+    with SessionLocal() as db:
+        pending = db.execute(
+            select(EmailMessage.id, EmailMessage.organization_id)
+            .where(
+                EmailMessage.campaign_id == campaign_id,
+                EmailMessage.status == "queued",
+                (EmailMessage.next_attempt_at.is_(None)) | (EmailMessage.next_attempt_at <= now()),
+            )
+            .order_by(EmailMessage.created_at)
+        ).all()
+    if pending:
+        enqueue_deliveries(pending)
 
 
 @celery.task
 def dispatch():
-    with SessionLocal() as db:
-        for schedule in db.scalars(
+    if not claim_dispatch_lock():
+        return
+    try:
+        with SessionLocal() as db:
+            for schedule in db.scalars(
             select(ScheduledCampaign)
             .where(ScheduledCampaign.dispatched.is_(False), ScheduledCampaign.due_at <= now())
             .with_for_update(skip_locked=True)
-        ):
-            campaign = db.get(Campaign, schedule.campaign_id)
-            if campaign.status == "scheduled":
-                campaign.status = "processing"
-                schedule.dispatched = True
-        # A crashed process may have sent DATA. Do not retry an uncertain outcome automatically.
-        for msg in db.scalars(
+            ):
+                campaign = db.get(Campaign, schedule.campaign_id)
+                if campaign.status == "scheduled":
+                    campaign.status = "processing"
+                    schedule.dispatched = True
+            # A crashed process may have sent DATA. Do not retry an uncertain outcome automatically.
+            for msg in db.scalars(
             select(EmailMessage)
             .where(EmailMessage.status == "sending", EmailMessage.lease_until < now())
             .with_for_update(skip_locked=True)
-        ):
-            msg.status = "uncertain"
-            msg.error = "Worker interrupted during SMTP transaction; verify with provider before any manual resend"
-            db.add(
-                EmailEvent(organization_id=msg.organization_id, message_id=msg.id, kind="uncertain")
-            )
-        for extraction in db.scalars(
+            ):
+                msg.status = "uncertain"
+                msg.error = "Worker interrupted during SMTP transaction; verify with provider before any manual resend"
+                db.add(
+                    EmailEvent(organization_id=msg.organization_id, message_id=msg.id, kind="uncertain")
+                )
+            for extraction in db.scalars(
             select(Extraction)
             .where(
                 Extraction.status == "processing",
                 Extraction.created_at < now() - timedelta(minutes=15),
             )
             .with_for_update(skip_locked=True)
-        ):
-            extraction.status = "failed"
-            extraction.error = "Extraction exceeded its execution window; retry the document."
-        db.commit()
-        for campaign in db.scalars(
+            ):
+                extraction.status = "failed"
+                extraction.error = "Extraction exceeded its execution window; retry the document."
+            db.commit()
+            for campaign in db.scalars(
             select(Campaign).where(Campaign.status.in_(["processing", "sending"]))
-        ):
-            finish(db, campaign)
-        pending = db.execute(
+            ):
+                finish(db, campaign)
+            pending = db.execute(
             select(EmailMessage.id, EmailMessage.organization_id)
             .join(Campaign)
             .where(
@@ -73,16 +137,13 @@ def dispatch():
                 (EmailMessage.next_attempt_at.is_(None)) | (EmailMessage.next_attempt_at <= now()),
             )
             .order_by(EmailMessage.created_at)
-        ).all()
-    # Queue every selected recipient. The per-organization delay protects the
-    # sender without imposing an artificial campaign-size limit.
-    by_organization = defaultdict(list)
-    for identifier, organization_id in pending:
-        by_organization[organization_id].append(identifier)
-    interval = max(0, get_settings().delay_between_emails)
-    for identifiers in by_organization.values():
-        for position, identifier in enumerate(identifiers):
-            deliver.apply_async(args=[identifier], countdown=position * interval)
+            ).all()
+        enqueue_deliveries(pending)
+    finally:
+        try:
+            release_dispatch_lock()
+        except Exception:
+            logger.exception("Could not release recovery dispatch lock")
 
 
 @celery.task
@@ -109,33 +170,35 @@ def deliver(identifier):
             or s.dry_run
         ):
             return
-        recipients = [db.get(Recipient, msg.recipient_id) if msg.recipient_id else None]
-        recipients += [
-            db.scalar(
-                select(Recipient).where(
-                    Recipient.organization_id == msg.organization_id,
-                    Recipient.email == email.lower(),
-                )
-            )
-            for email in [*campaign.cc, *campaign.bcc]
-        ]
-        if any(
-            not recipient or not eligible(db, msg.organization_id, recipient)
-            for recipient in recipients
-        ):
+        # Only the primary address can cancel a queued message. CC/BCC are optional
+        # SMTP headers — missing library rows must not cancel the whole send.
+        if msg.recipient_id:
+            primary = db.get(Recipient, msg.recipient_id)
+            if primary is not None and not eligible(db, msg.organization_id, primary):
+                msg.status = "cancelled"
+                msg.error = "Recipient is no longer available"
+                db.commit()
+                finish(db, campaign)
+                return
+        elif not msg.recipient_email:
             msg.status = "cancelled"
-            msg.error = "Recipient is unavailable or address is suppressed"
+            msg.error = "Recipient address is missing"
             db.commit()
             finish(db, campaign)
             return
-        limiter = Redis.from_url(s.redis_url)
-        if not limiter.set(
-            f"send-rate:{msg.organization_id}",
-            identifier,
-            nx=True,
-            px=max(1, int(s.delay_between_emails * 1000)),
-        ):
-            return
+        # Soft per-org spacing. If another send just claimed the slot, re-queue
+        # quickly instead of waiting for the next beat cycle.
+        interval = max(0.0, float(s.delay_between_emails))
+        if interval > 0:
+            limiter = Redis.from_url(s.redis_url)
+            if not limiter.set(
+                f"send-rate:{msg.organization_id}",
+                identifier,
+                nx=True,
+                px=max(100, int(interval * 1000)),
+            ):
+                deliver.apply_async(args=[identifier], countdown=max(interval, 0.2))
+                return
         msg.status = "sending"
         msg.attempts += 1
         msg.lease_until = now() + timedelta(minutes=5)
@@ -149,6 +212,14 @@ def deliver(identifier):
         )
         db.add(attempt)
         db.commit()
+        try:
+            # The message is now durably claimed as `sending`; future beat
+            # ticks cannot publish a duplicate task for it.
+            delivery_enqueue_limiter().delete(delivery_enqueue_key(identifier))
+        except Exception:
+            # An expired lock is harmless once the durable status is sending.
+            logger.exception("Could not release delivery enqueue lease")
+        retry_delay = None
         try:
             account = db.get(SMTPAccount, campaign.smtp_account_id)
             docs = db.scalars(
@@ -169,22 +240,43 @@ def deliver(identifier):
             msg.error = str(error)[:2000]
             if transient and msg.attempts <= s.max_retries:
                 msg.status = "queued"
-                msg.next_attempt_at = now() + timedelta(seconds=30 * 2 ** (msg.attempts - 1))
+                retry_delay = 30 * 2 ** (msg.attempts - 1)
+                msg.next_attempt_at = now() + timedelta(seconds=retry_delay)
             else:
                 msg.status = "failed"
             attempt.status = "failed"
             attempt.response = msg.error
         except (TimeoutError, ConnectionError, smtplib.SMTPServerDisconnected, OSError) as error:
-            msg.status = "uncertain"
-            msg.error = "SMTP outcome uncertain; automatic retry withheld: " + str(error)[:1000]
-            attempt.status = "uncertain"
-            attempt.response = msg.error
+            # Prefer a short retry over dropping the recipient. After retries are
+            # exhausted, keep uncertain so operators can verify before a manual resend.
+            detail = str(error)[:1000]
+            if msg.attempts <= s.max_retries:
+                msg.status = "queued"
+                retry_delay = max(3, 4 * msg.attempts)
+                msg.next_attempt_at = now() + timedelta(seconds=retry_delay)
+                msg.error = "Temporary SMTP connection issue; retrying: " + detail
+                attempt.status = "failed"
+                attempt.response = msg.error
+            else:
+                msg.status = "uncertain"
+                msg.error = "SMTP outcome uncertain after retries; verify with provider before any manual resend: " + detail
+                attempt.status = "uncertain"
+                attempt.response = msg.error
         except Exception as error:
             logger.exception("Delivery failed before confirmation")
-            msg.status = "failed"
-            msg.error = type(error).__name__ + ": " + str(error)[:1000]
-            attempt.status = "failed"
-            attempt.response = msg.error
+            detail = type(error).__name__ + ": " + str(error)[:1000]
+            if msg.attempts <= s.max_retries:
+                msg.status = "queued"
+                retry_delay = max(3, 4 * msg.attempts)
+                msg.next_attempt_at = now() + timedelta(seconds=retry_delay)
+                msg.error = "Temporary delivery issue; retrying: " + detail
+                attempt.status = "failed"
+                attempt.response = msg.error
+            else:
+                msg.status = "failed"
+                msg.error = detail
+                attempt.status = "failed"
+                attempt.response = msg.error
         msg.lease_until = None
         db.add(
             EmailEvent(
@@ -195,6 +287,15 @@ def deliver(identifier):
             )
         )
         db.commit()
+        if retry_delay:
+            try:
+                # Schedule the retry directly so temporary delivery recovery
+                # does not depend solely on the periodic dispatcher.
+                deliver.apply_async(args=[identifier], countdown=retry_delay)
+            except Exception:
+                # The dispatcher remains a safe recovery path if the broker
+                # briefly rejects a scheduling request after the DB commit.
+                logger.exception("Could not schedule SMTP retry; dispatcher will recover it")
         finish(db, campaign)
 
 

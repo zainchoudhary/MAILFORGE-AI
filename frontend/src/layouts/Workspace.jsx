@@ -39,9 +39,9 @@ const groups = [
     [
       ['Overview', '/', LayoutDashboard],
       ['AI Agent Studio', '/studio', Bot],
-      ['Campaign', '/campaigns', Mail],
       ['Recipients', '/recipients', Users],
       ['Recipient groups', '/recipient-groups', UserRoundPlus],
+      ['Campaign', '/campaigns', Mail],
     ],
   ],
   [

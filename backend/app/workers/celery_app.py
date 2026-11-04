@@ -16,5 +16,7 @@ celery.conf.update(
     worker_prefetch_multiplier=1,
     task_acks_late=True,
     task_reject_on_worker_lost=True,
-    beat_schedule={"dispatch": {"task": "app.workers.tasks.dispatch", "schedule": 5.0}},
+    # New deliveries are queued directly on approval. Beat is only a recovery
+    # mechanism, so a modest interval avoids it competing with delivery work.
+    beat_schedule={"dispatch": {"task": "app.workers.tasks.dispatch", "schedule": 10.0}},
 )

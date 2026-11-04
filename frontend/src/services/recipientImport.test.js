@@ -1,9 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { api } from './api';
-import { reviewRows, importReviewedRecipients, importSummary } from './recipientImport';
+import { reviewRows, importReviewedRecipients, importSummary, startExtractionForUploadedDocument } from './recipientImport';
 vi.mock('./api', () => ({ api: { post: vi.fn() } }));
 beforeEach(() => vi.resetAllMocks());
 describe('Reviewed recipient imports', () => {
+  it('starts recipient extraction as soon as a file upload completes', () => {
+    const startExtraction = vi.fn();
+    const document = { id: 'document-42', filename: 'contacts.xlsx' };
+
+    startExtractionForUploadedDocument([document], startExtraction);
+
+    expect(startExtraction).toHaveBeenCalledOnce();
+    expect(startExtraction).toHaveBeenCalledWith(document);
+  });
+  it('does not start extraction when an upload has no document result', () => {
+    const startExtraction = vi.fn();
+
+    startExtractionForUploadedDocument([], startExtraction);
+
+    expect(startExtraction).not.toHaveBeenCalled();
+  });
   it('imports untouched worker results instead of an empty edit buffer', async () => {
     api.post.mockResolvedValue({ data: { added: 1, duplicates: 0 } });
     const rows = reviewRows(null, { records: [{ name: 'Alex', email: 'alex@example.com' }] });

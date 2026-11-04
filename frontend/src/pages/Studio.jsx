@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { useApi, useAction } from '../hooks/useApi';
 import { api } from '../services/api';
-import { PageHeader, Status, BusyButton, QueryState, Empty, dateLabel } from '../components/Common';
+import { PageHeader, Status, BusyButton, QueryState, Empty, dateLabel, PickerDropdown } from '../components/Common';
 import { Button } from '../components/ui/button';
 const agents = [
   ['Document intelligence', FileScan, 'Parse, OCR, extract, deduplicate.'],
@@ -133,25 +133,8 @@ export default function Studio() {
             )}
           </div>
           <div className="chat-context">
-            <select value={campaign} onChange={(e) => setCampaign(e.target.value)}>
-              <option value="">Add campaign context</option>
-              {campaigns.data?.items.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <select
-              value=""
-              onChange={(e) => setDocuments([...new Set([...documents, e.target.value])])}
-            >
-              <option value="">Attach document context ({documents.length})</option>
-              {docs.data?.items.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.filename}
-                </option>
-              ))}
-            </select>
+            <PickerDropdown searchable value={campaign} onChange={setCampaign} placeholder="Add campaign context" ariaLabel="Add campaign context" options={(campaigns.data?.items || []).map((item) => ({ value: item.id, label: item.name, description: item.status }))} />
+            <PickerDropdown searchable value="" onChange={(documentId) => setDocuments([...new Set([...documents, documentId])])} placeholder={`Attach document context (${documents.length})`} ariaLabel="Attach document context" options={(docs.data?.items || []).map((item) => ({ value: item.id, label: item.filename, description: 'Private workspace document' }))} />
             {documents.length > 0 && (
               <Button variant="ghost" size="sm" onClick={() => setDocuments([])}>
                 Clear files
