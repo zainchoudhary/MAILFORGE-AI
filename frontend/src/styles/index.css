@@ -3076,6 +3076,37 @@ td select:not([multiple]) {
 /* Reusable application picker — matches the saved-recipient-group dropdown. */
 .picker-dropdown { position: relative; width: 100%; }
 .template-picker { width: 180px; flex: 0 0 180px; }
+.compose-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.compose-section:not(.is-collapsed) .compose-section-toggle { margin-bottom: 16px; }
+.compose-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.compose-section-heading h3 { margin: 0; }
+.compose-section-toggle > svg {
+  flex-shrink: 0;
+  color: #64748b;
+  transition: transform .16s ease;
+}
+.compose-section-toggle > svg.open { transform: rotate(180deg); }
+.compose-section-toggle:hover > svg { color: #334155; }
+.compose-section-tools { margin-bottom: 14px; }
 .compose-message-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .compose-message-tools .compose-ai-trigger {
   min-height: 44px;

@@ -39,6 +39,27 @@ const parseManualRecipients = (value) =>
         email: z.string().email().parse(match[2]).toLowerCase(),
       };
     });
+
+function ComposeSection({ title, open, onToggle, badge, children }) {
+  return (
+    <section className={`panel compose-section${open ? '' : ' is-collapsed'}`}>
+      <button
+        type="button"
+        className="compose-section-toggle"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className="compose-section-heading">
+          <h3>{title}</h3>
+          {badge}
+        </span>
+        <ChevronDown size={18} className={open ? 'open' : ''} aria-hidden="true" />
+      </button>
+      {open ? <div className="compose-section-body">{children}</div> : null}
+    </section>
+  );
+}
+
 export default function Compose() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -65,6 +86,13 @@ export default function Compose() {
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [autosaveStatus, setAutosaveStatus] = useState('');
   const [recoveryReady, setRecoveryReady] = useState(Boolean(editId));
+  const [openSections, setOpenSections] = useState({
+    details: true,
+    recipients: true,
+    message: true,
+    attachments: true,
+  });
+  const toggleSection = (key) => setOpenSections((current) => ({ ...current, [key]: !current[key] }));
   const autosaveInFlight = useRef(false);
   const recipients = useApi('/recipients?limit=100');
   const recipientGroups = useApi('/recipient-groups');
@@ -81,7 +109,12 @@ export default function Compose() {
   const isGroupSelected = (group) => group.recipient_ids.length > 0
     && group.recipient_ids.every((id) => recipientIds.includes(id));
   const selectedGroups = (recipientGroups.data?.items || []).filter(isGroupSelected);
-  const selectedRecipients = (recipients.data?.items || []).filter((recipient) => recipientIds.includes(recipient.id));
+  // Group members stay under the group chip/popup — Selected recipients only
+  // lists people picked individually outside of any currently selected group.
+  const selectedGroupMemberIds = new Set(selectedGroups.flatMap((group) => group.recipient_ids || []));
+  const selectedRecipients = (recipients.data?.items || []).filter(
+    (recipient) => recipientIds.includes(recipient.id) && !selectedGroupMemberIds.has(recipient.id),
+  );
   const visibleGroups = (recipientGroups.data?.items || []).filter((group) => group.name.toLowerCase().includes(groupSearch.trim().toLowerCase()));
   useEffect(() => {
     const closeWhenOutside = (event) => {
@@ -275,8 +308,11 @@ export default function Compose() {
       </PageHeader>
       <div className="compose-grid">
         <div className="space-y-5">
-          <section className="panel">
-            <h3 className="mb-5">Campaign details</h3>
+          <ComposeSection
+            title="Campaign details"
+            open={openSections.details}
+            onToggle={() => toggleSection('details')}
+          >
             <div className="form-grid">
               <Field label="Campaign name" required error={form.formState.errors.name}>
                 <input placeholder="e.g. Partnership introductions" {...form.register('name')} />
@@ -297,14 +333,17 @@ export default function Compose() {
             <Field label="Description">
               <input placeholder="A short internal description" {...form.register('description')} />
             </Field>
-          </section>
-          <section className="panel">
-            <div className="panel-heading">
-              <h3>Recipients</h3>
+          </ComposeSection>
+          <ComposeSection
+            title="Recipients"
+            open={openSections.recipients}
+            onToggle={() => toggleSection('recipients')}
+            badge={(
               <span className="period-chip">
                 {recipientIds.length + parseEmails(manual).length} selected
               </span>
-            </div>
+            )}
+          >
             <Field label="Add recipients manually">
               <input
                 value={manual}
@@ -433,38 +472,39 @@ export default function Compose() {
                 />
               </Field>
             </div>
-          </section>
-          <section className="panel">
-            <div className="panel-heading">
-              <h3>Your message</h3>
-              <div className="compose-message-tools">
-                <PickerDropdown
-                  searchable
-                  value={selectedTemplate}
-                  onChange={(templateId) => {
-                    setSelectedTemplate(templateId);
-                    const t = (templates.data?.items || []).find((t) => t.id === templateId);
-                    if (t) {
-                      form.setValue('subject', t.subject);
-                      form.setValue('body', t.body);
-                    }
-                  }}
-                  placeholder="Use a template"
-                  icon={FileText}
-                  ariaLabel="Choose a message template"
-                  className="template-picker"
-                  options={(templates.data?.items || []).map((t) => ({ value: t.id, label: t.name, description: t.subject }))}
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="compose-ai-trigger"
-                  onClick={() => setAiOpen(true)}
-                >
-                  <Sparkles size={15} />
-                  Write with AI
-                </Button>
-              </div>
+          </ComposeSection>
+          <ComposeSection
+            title="Your message"
+            open={openSections.message}
+            onToggle={() => toggleSection('message')}
+          >
+            <div className="compose-message-tools compose-section-tools">
+              <PickerDropdown
+                searchable
+                value={selectedTemplate}
+                onChange={(templateId) => {
+                  setSelectedTemplate(templateId);
+                  const t = (templates.data?.items || []).find((t) => t.id === templateId);
+                  if (t) {
+                    form.setValue('subject', t.subject);
+                    form.setValue('body', t.body);
+                  }
+                }}
+                placeholder="Use a template"
+                icon={FileText}
+                ariaLabel="Choose a message template"
+                className="template-picker"
+                options={(templates.data?.items || []).map((t) => ({ value: t.id, label: t.name, description: t.subject }))}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                className="compose-ai-trigger"
+                onClick={() => setAiOpen(true)}
+              >
+                <Sparkles size={15} />
+                Write with AI
+              </Button>
             </div>
             <Field label="Subject line" error={form.formState.errors.subject}>
               <input placeholder="A subject worth opening" {...form.register('subject')} />
@@ -484,9 +524,13 @@ export default function Compose() {
                 >{`{{${t}}}`}</button>
               ))}
             </div>
-          </section>
-          <section className="panel">
-            <h3 className="mb-4">Attachments</h3>
+          </ComposeSection>
+          <ComposeSection
+            title="Attachments"
+            open={openSections.attachments}
+            onToggle={() => toggleSection('attachments')}
+            badge={attachments.length ? <span className="period-chip">{attachments.length} added</span> : null}
+          >
             <Uploader
               compact
               onUploaded={(items) => setAttachments((prev) => [...prev, ...items])}
@@ -520,7 +564,7 @@ export default function Compose() {
                 </button>
               </div>
             ))}
-          </section>
+          </ComposeSection>
         </div>
         <aside className="space-y-5">
           <section className="panel outreach-drafts">
