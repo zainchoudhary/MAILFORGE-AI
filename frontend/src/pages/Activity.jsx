@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowUpRight, Download, SlidersHorizontal, ArrowDownUp } from 'lucide-react';
+import { ArrowUpRight, Download, SlidersHorizontal, ArrowDownUp, Search } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { downloadFile } from '../services/api';
 import { PageHeader, QueryState, Empty, Status, Pagination, dateLabel, PickerDropdown } from '../components/Common';
@@ -25,16 +25,19 @@ export default function Activity() {
       />
       <section className="panel">
         <div className="filter-bar">
-          <input
-            type="search"
-            aria-label="Search messages"
-            placeholder="Search recipient or subject"
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setPage(1);
-            }}
-          />
+          <div className="search-input">
+            <Search size={16} aria-hidden="true" />
+            <input
+              type="text"
+              aria-label="Search messages"
+              placeholder="Search recipient or subject"
+              value={q}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setPage(1);
+              }}
+            />
+          </div>
           <PickerDropdown
             ariaLabel="Filter messages by status"
             value={status}

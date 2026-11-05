@@ -642,9 +642,13 @@ def notifications(user=Depends(current_user), db=Depends(get_db)):
 def preview_document(identifier: str, user=Depends(current_user), db=Depends(get_db)):
     from fastapi.responses import Response
 
+    from app.document_processing.parser import ALLOWED, read_document
+
     doc = owned(db, Document, identifier, user.organization_id)
     path = Path(get_settings().storage_path) / doc.storage_key
     extension = Path(doc.filename).suffix.lower()
+    preview_headers = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+
     if extension == ".pdf":
         import fitz
 
@@ -656,20 +660,31 @@ def preview_document(identifier: str, user=Depends(current_user), db=Depends(get
             return Response(
                 page.get_pixmap(matrix=fitz.Matrix(scale, scale)).tobytes("png"),
                 media_type="image/png",
-                headers={"Cache-Control": "no-store"},
+                headers=preview_headers,
             )
     if extension in (".png", ".jpg", ".jpeg"):
-        return FileResponse(path, media_type=doc.mime_type, headers={"Cache-Control": "no-store"})
-    if extension in (".txt", ".csv", ".json", ".xml"):
-        with path.open("r", encoding="utf-8-sig", errors="replace") as handle:
-            return Response(
-                handle.read(100000),
-                media_type="text/plain",
-                headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        return FileResponse(path, media_type=doc.mime_type, headers=preview_headers)
+    if extension in ALLOWED:
+        # Office and text attachments: extract a readable preview instead of
+        # forcing a download-only path for non-PDF files.
+        try:
+            text, _rows = read_document(path, extension)
+        except Exception as exc:
+            raise HTTPException(422, f"Unable to build a preview for this file: {exc}") from exc
+        preview = (text or "").strip()
+        if not preview:
+            raise HTTPException(
+                422,
+                "No readable preview content was found in this file. Download the original to inspect it.",
             )
+        return Response(
+            preview[:100000],
+            media_type="text/plain; charset=utf-8",
+            headers=preview_headers,
+        )
     raise HTTPException(
         415,
-        "Preview supports PDF first page, images, and text. Download this Office file to inspect it.",
+        "Preview is not available for this file type. Download the original to inspect it.",
     )
 
 

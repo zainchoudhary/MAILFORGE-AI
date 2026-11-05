@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { FileScan, Plus, Pencil, Trash2, Loader2, Users, Upload, Mail, Building2, ListChecks } from 'lucide-react';
+import { FileScan, Plus, Pencil, Trash2, Loader2, Users, Upload, Mail, Building2, ListChecks, Search } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { useApi, useAction } from '../hooks/useApi';
@@ -204,16 +204,19 @@ export default function Recipients() {
           {selectionMode && <span className="selection-indicator"><ListChecks size={15} /> {selectedIds.length} selected</span>}
         </div>
         <div className="filter-bar recipients-toolbar">
-          <input
-            type="search"
-            aria-label="Search recipients"
-            placeholder="Search names or email addresses"
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setPage(1);
-            }}
-          />
+          <div className="search-input">
+            <Search size={16} aria-hidden="true" />
+            <input
+              type="text"
+              aria-label="Search recipients"
+              placeholder="Search names or email addresses"
+              value={q}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setPage(1);
+              }}
+            />
+          </div>
           {q && <Button variant="ghost" size="sm" onClick={() => { setQ(''); setPage(1); }}>Clear search</Button>}
           {query.data?.total > 0 && <Button
             variant={selectionMode ? 'default' : 'secondary'}

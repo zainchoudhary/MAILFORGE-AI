@@ -1,5 +1,6 @@
 /* Landing only — mirrors Outreach Studio / dashboard tokens */
 .landing {
+  color-scheme: light;
   --lf-ink: #0f172a;
   --lf-mute: #64748b;
   --lf-line: #dbe5f1;

@@ -32,6 +32,7 @@ import { useApi } from '../hooks/useApi';
 import { api, session } from '../services/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { ConfirmDialog } from '../components/Common';
+import { ThemeToggle } from '../components/ThemeToggle';
 import { Brand, OutreachMark } from '../components/Brand';
 const groups = [
   [
@@ -163,15 +164,7 @@ export default function Workspace() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="safe-card">
-            <ShieldCheck size={18} />
-            <div>
-              <strong>{settings.data?.dry_run ? 'Safe mode enabled' : 'Approval protected'}</strong>
-              <small>
-                {settings.data?.dry_run ? 'Dry run · no live delivery' : 'Human approval required'}
-              </small>
-            </div>
-          </div>
+          <ThemeToggle />
           <button
             className="profile"
             onClick={() => setLogoutOpen(true)}

@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react';
 import { api, errorText, downloadFile } from '../services/api';
 import { Dialog } from './ui/dialog';
 import { Button } from './ui/button';
+
+function isImageBlob(blob) {
+  return Boolean(blob?.type?.startsWith('image/'));
+}
+
 export function FilePreview({ document, onClose }) {
   const [content, setContent] = useState(null);
   const [error, setError] = useState('');
@@ -15,13 +20,13 @@ export function FilePreview({ document, onClose }) {
         .get(`/documents/${document.id}/preview`, { responseType: 'blob' })
         .then(async ({ data }) => {
           if (!active) return;
-          if (data.type.startsWith('image/')) {
+          if (isImageBlob(data)) {
             url = URL.createObjectURL(data);
-            setContent({ image: url });
-          } else {
-            const text = await data.text();
-            if (active) setContent({ text });
+            setContent({ kind: 'image', url });
+            return;
           }
+          const text = await data.text();
+          if (active) setContent({ kind: 'text', text });
         })
         .catch(async (e) => {
           let message = errorText(e);
@@ -44,16 +49,21 @@ export function FilePreview({ document, onClose }) {
           <p>{error}</p>
         ) : !content ? (
           <p>Loading secure preview…</p>
-        ) : content.image ? (
+        ) : content.kind === 'image' ? (
           <img
-            src={content.image}
+            src={content.url}
             alt={document.filename}
             className="max-h-[65vh] mx-auto object-contain"
           />
         ) : (
-          <pre className="text-xs whitespace-pre-wrap max-h-[60vh] overflow-auto">
-            {content.text}
-          </pre>
+          <>
+            <p className="mb-3 file-preview-hint">
+              Readable preview of this attachment. Download the original for the full file.
+            </p>
+            <pre className="file-preview-text">
+              {content.text}
+            </pre>
+          </>
         )}
         <Button
           className="mt-4"

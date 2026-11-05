@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Bold, Italic, List, ListOrdered, Undo2, Redo2 } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
 export function RichEditor({ value, onChange }) {
   const editor = useEditor({
     extensions: [StarterKit.configure({ link: { openOnClick: false } })],
@@ -38,6 +39,11 @@ export function RichEditor({ value, onChange }) {
   );
 }
 export function EmailPreview({ subject, body, recipient }) {
+  const { theme } = useTheme();
+  const dark = theme === 'dark';
+  const frameStyles = dark
+    ? 'body{margin:0;font:14px/1.7 Arial,sans-serif;color:#e6edf3;background:#0d1117;padding:12px;overflow-wrap:anywhere}a{color:#79b8ff}p,li,td,th,div,span{color:inherit}'
+    : 'body{margin:0;font:14px/1.7 Arial,sans-serif;color:#1e293b;background:#fff;padding:12px;overflow-wrap:anywhere}a{color:#2563eb}';
   return (
     <div className="email-preview">
       <div>
@@ -46,9 +52,10 @@ export function EmailPreview({ subject, body, recipient }) {
       </div>
       <h3>{subject || '(No subject)'}</h3>
       <iframe
+        key={theme}
         title="Email preview"
         sandbox=""
-        srcDoc={`<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>body{font:14px/1.7 Arial;color:#1e293b;padding:12px;overflow-wrap:anywhere}a{color:#2563eb}</style></head><body>${body || '<p>Your email preview will appear here.</p>'}</body></html>`}
+        srcDoc={`<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>${frameStyles}</style></head><body>${body || '<p>Your email preview will appear here.</p>'}</body></html>`}
       />
     </div>
   );

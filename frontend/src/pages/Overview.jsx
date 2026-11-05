@@ -26,45 +26,77 @@ import {
   Workflow,
 } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
+import { useTheme } from '../context/ThemeContext';
 import { Button } from '../components/ui/button';
 import { PageHeader, QueryState, Empty, Status, dateLabel } from '../components/Common';
-const colors = ['#2563EB', '#16A34A', '#64748B', '#0F172A', '#DC2626', '#94A3B8'];
+
+const LIGHT_CHART = {
+  grid: '#E2E8F0',
+  tick: '#64748B',
+  tooltipBg: '#FFFFFF',
+  tooltipBorder: '#E2E8F0',
+  tooltipText: '#0F172A',
+  primary: '#2563EB',
+  success: '#16A34A',
+  pie: ['#2563EB', '#16A34A', '#64748B', '#0F172A', '#DC2626', '#94A3B8'],
+};
+
+const DARK_CHART = {
+  grid: '#30363d',
+  tick: '#8b949e',
+  tooltipBg: '#161b22',
+  tooltipBorder: '#30363d',
+  tooltipText: '#e6edf3',
+  primary: '#6488f6',
+  success: '#3fb950',
+  pie: ['#6488f6', '#3fb950', '#8b949e', '#c9d1d9', '#f85149', '#6e7681'],
+};
+
+function useChartTheme() {
+  const { theme } = useTheme();
+  return theme === 'dark' ? DARK_CHART : LIGHT_CHART;
+}
+
 export function ActivityChart({ data }) {
+  const chart = useChartTheme();
   return data.length ? (
     <ResponsiveContainer width="100%" height={260}>
       <AreaChart data={data} margin={{ top: 20, right: 12, left: -25, bottom: 0 }}>
         <defs>
           <linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#2563EB" stopOpacity={0.2} />
-            <stop offset="100%" stopColor="#2563EB" stopOpacity={0} />
+            <stop offset="0%" stopColor={chart.primary} stopOpacity={0.28} />
+            <stop offset="100%" stopColor={chart.primary} stopOpacity={0} />
           </linearGradient>
         </defs>
-        <CartesianGrid stroke="#E2E8F0" vertical={false} strokeDasharray="3 5" />
+        <CartesianGrid stroke={chart.grid} vertical={false} strokeDasharray="3 5" />
         <XAxis
           dataKey="date"
-          tick={{ fill: '#64748B', fontSize: 10 }}
+          tick={{ fill: chart.tick, fontSize: 10 }}
           axisLine={false}
           tickLine={false}
         />
         <YAxis
           allowDecimals={false}
-          tick={{ fill: '#64748B', fontSize: 11 }}
+          tick={{ fill: chart.tick, fontSize: 11 }}
           axisLine={false}
           tickLine={false}
         />
         <Tooltip
           contentStyle={{
-            background: '#FFFFFF',
-            border: '1px solid #E2E8F0',
+            background: chart.tooltipBg,
+            border: `1px solid ${chart.tooltipBorder}`,
             borderRadius: 10,
-            color: '#0F172A',
+            color: chart.tooltipText,
+            boxShadow: '0 12px 28px rgb(0 0 0 / 18%)',
           }}
+          labelStyle={{ color: chart.tooltipText }}
+          itemStyle={{ color: chart.tooltipText }}
         />
         <Area
           name="Processed messages"
           type="monotone"
           dataKey="total"
-          stroke="#2563EB"
+          stroke={chart.primary}
           strokeWidth={2.5}
           fill="url(#chartFill)"
         />
@@ -72,7 +104,7 @@ export function ActivityChart({ data }) {
           name="Emails sent"
           type="monotone"
           dataKey="accepted"
-          stroke="#16A34A"
+          stroke={chart.success}
           fill="transparent"
           strokeWidth={2}
         />
@@ -101,6 +133,7 @@ function DashboardPageSkeleton() {
   </div>;
 }
 export default function Overview() {
+  const chart = useChartTheme();
   const metrics = useApi('/analytics/overview', { refetchInterval: 15000 });
   const activity = useApi('/analytics/emails?days=30');
   const campaigns = useApi('/campaigns?limit=5');
@@ -209,11 +242,11 @@ export default function Overview() {
                 <QueryState query={activity}>{(d) => <ActivityChart data={d.items} />}</QueryState>
                 <div className="chart-legend">
                   <span>
-                    <i style={{ background: '#2563EB' }} />
+                    <i style={{ background: chart.primary }} />
                     Processed
                   </span>
                   <span>
-                    <i style={{ background: '#16A34A' }} />
+                    <i style={{ background: chart.success }} />
                     Emails sent
                   </span>
                 </div>
@@ -241,17 +274,26 @@ export default function Overview() {
                           stroke="none"
                         >
                           {Object.keys(m.statuses).map((k, i) => (
-                            <Cell key={k} fill={colors[i % colors.length]} />
+                            <Cell key={k} fill={chart.pie[i % chart.pie.length]} />
                           ))}
                         </Pie>
-                        <Tooltip contentStyle={{ background: '#FFFFFF', borderColor: '#E2E8F0' }} />
+                        <Tooltip
+                          contentStyle={{
+                            background: chart.tooltipBg,
+                            border: `1px solid ${chart.tooltipBorder}`,
+                            borderRadius: 10,
+                            color: chart.tooltipText,
+                          }}
+                          labelStyle={{ color: chart.tooltipText }}
+                          itemStyle={{ color: chart.tooltipText }}
+                        />
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="status-key">
                       {Object.entries(m.statuses).map(([key, value], i) => (
                         <div key={key}>
                           <span>
-                            <i style={{ background: colors[i % colors.length] }} />
+                            <i style={{ background: chart.pie[i % chart.pie.length] }} />
                             {key.replaceAll('_', ' ')}
                           </span>
                           <strong>{value}</strong>

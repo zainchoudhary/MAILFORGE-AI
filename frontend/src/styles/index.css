@@ -221,8 +221,18 @@ a:focus-visible {
 .sidebar-app-mark .sidebar-collapsed-logo { display: block; width: 28px; height: 28px; opacity: 1; transform: scale(1); transition: opacity .15s ease, transform .15s ease; }
 .sidebar-app-mark .sidebar-collapsed-logo rect { fill: url(#outreach-gradient); }
 .sidebar-collapsed-toggle-icons { display: grid; place-items: center; width: 32px; height: 32px; }
-.sidebar-collapsed-toggle-icons > * { grid-area: 1 / 1; transition: opacity .15s ease; }
-.sidebar-expand-mark { display: none; }
+.sidebar-collapsed-toggle-icons > * { grid-area: 1 / 1; transition: opacity .15s ease, transform .15s ease; }
+.sidebar-expand-mark { opacity: 0; color: #2563eb; pointer-events: none; }
+.sidebar-collapse-toggle:hover .sidebar-app-mark,
+.sidebar-collapse-toggle:focus-visible .sidebar-app-mark {
+  opacity: 0;
+  transform: scale(0.92);
+}
+.sidebar-collapse-toggle:hover .sidebar-expand-mark,
+.sidebar-collapse-toggle:focus-visible .sidebar-expand-mark {
+  opacity: 1;
+  transform: scale(1);
+}
 .sidebar-collapsed .sidebar-heading-row .brand { display: none; }
 .sidebar-collapsed .sidebar-heading-row { justify-content: center; min-height: 32px; }
 .sidebar-collapsed .sidebar-collapse-toggle { width: 36px; height: 36px; }
@@ -2895,13 +2905,19 @@ select option { background: white; color: #334155; }
 .filter-bar > select { width: auto; flex: 0 1 190px; margin-left: 0; }
 .filter-bar > .picker-dropdown { width: auto; flex: 0 1 190px; min-width: 150px; }
 .filter-bar > .picker-dropdown .picker-dropdown-trigger { min-height: 42px; border-radius: 10px; font-size: 12px; }
-.filter-bar input:not([type=checkbox]), .filter-bar select { min-height: 42px; background-color: #fff; border-color: #e2e8f0; border-radius: 10px; font-size: 12px; }
-.filter-bar > input, input[placeholder^="Search saved"] {
-  padding-left: 38px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='1.8' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='m16 16 4 4'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: 12px center;
+.filter-bar input:not([type=checkbox]), .filter-bar select { min-height: 42px; background-color: #fff; background-image: none; border-color: #e2e8f0; border-radius: 10px; font-size: 12px; }
+.filter-bar .search-input > svg { top: 50%; transform: translateY(-50%); pointer-events: none; color: #94a3b8; }
+input[type='search'] {
+  -webkit-appearance: none;
+  appearance: none;
 }
-.filter-bar .search-input > svg { top: 50%; transform: translateY(-50%); pointer-events: none; }
+input[type='search']::-webkit-search-decoration,
+input[type='search']::-webkit-search-cancel-button,
+input[type='search']::-webkit-search-results-button,
+input[type='search']::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+  display: none;
+}
 .filter-bar > .btn { white-space: nowrap; border-radius: 8px; }
 @media (max-width: 640px) {
   .filter-bar > input, .filter-bar > .search-input { flex-basis: 100%; }
@@ -3032,6 +3048,8 @@ select option { background: white; color: #334155; }
 
 /* Unified native dropdown treatment: campaign sender, filters, settings and editors. */
 select:not([multiple]) {
+  appearance: none;
+  -webkit-appearance: none;
   min-height: 44px;
   padding: 10px 42px 10px 13px;
   border: 1px solid #dbe3ef;
@@ -3039,7 +3057,9 @@ select:not([multiple]) {
   color: #334155;
   background-color: #fff;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
   background-position: right 13px center;
+  background-size: 18px 18px;
   box-shadow: 0 1px 2px rgb(15 23 42 / 2%);
   font-size: 12px;
   font-weight: 500;
@@ -3049,6 +3069,10 @@ select:not([multiple]) {
 select:not([multiple]):hover:not(:disabled) {
   border-color: #b8c7dc;
   background-color: #f8fbff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 18px 18px;
 }
 select:not([multiple]):focus,
 select:not([multiple]):focus-visible {
@@ -3221,3 +3245,19 @@ td select:not([multiple]) {
 .route-recovery { display: grid; place-items: center; align-content: center; min-height: calc(100vh - 260px); padding: 38px; text-align: center; }.route-recovery-mark { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 13px; border: 1px solid #c7d2fe; border-radius: 15px; color: #4f46e5; background: #eef2ff; }.route-recovery h2 { margin: 0 0 6px; color: #172554; font-size: 18px; }.route-recovery p { max-width: 340px; margin: 0 0 18px; color: #64748b; }
 .route-recovery-detail { max-width: 470px; margin: -9px 0 17px; color: #94a3b8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; overflow-wrap: anywhere; }
 
+
+.file-preview-hint { color: #64748b; font-size: 11px; line-height: 1.5; }
+.file-preview-text {
+  margin: 0;
+  padding: 14px;
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
