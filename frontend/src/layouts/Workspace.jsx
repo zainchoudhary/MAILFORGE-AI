@@ -113,7 +113,7 @@ export default function Workspace() {
       {open && <div className="sidebar-backdrop" onClick={() => setOpen(false)} />}
       <aside className={`sidebar ${open ? 'open' : ''}`}>
         <div className="sidebar-heading-row">
-        <NavLink to="/overview" aria-label="Outreach Studio home"><Brand /></NavLink>
+        <NavLink to="/" aria-label="Outreach Studio home"><Brand /></NavLink>
         <button
           type="button"
           className="sidebar-collapse-toggle"

@@ -194,8 +194,8 @@ a:focus-visible {
   z-index: 30;
 }
 .sidebar-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
-.sidebar-heading-row .brand { font-size: 13px; gap: 6px; letter-spacing: .1px; }
-.sidebar-heading-row .outreach-mark { width: 28px; height: 28px; flex-shrink: 0; }
+.sidebar-heading-row .brand { font-size: 15px; gap: 8px; letter-spacing: .1px; }
+.sidebar-heading-row .outreach-mark { width: 32px; height: 32px; flex-shrink: 0; }
 .sidebar-collapse-toggle {
   position: relative;
   flex-shrink: 0;
@@ -235,6 +235,7 @@ a:focus-visible {
 }
 .sidebar-collapsed .sidebar-heading-row .brand { display: none; }
 .sidebar-collapsed .sidebar-heading-row { justify-content: center; min-height: 32px; }
+.sidebar-collapsed .sidebar-collapsed-toggle-icons { transform: translateX(-2px); }
 .sidebar-collapsed .sidebar-collapse-toggle { width: 36px; height: 36px; }
 .sidebar-collapsed .sidebar .profile > .avatar { display: none; }
 .sidebar-collapsed .brand > span,

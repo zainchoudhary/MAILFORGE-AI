@@ -15,10 +15,6 @@ const ThemeContext = createContext({
 
 export function ThemeProvider({ children }) {
   const [theme, setThemeState] = useState(() => {
-    if (typeof document !== 'undefined') {
-      const current = document.documentElement.getAttribute('data-theme');
-      if (current === 'light' || current === 'dark') return current;
-    }
     return initTheme();
   });
 
@@ -33,6 +29,12 @@ export function ThemeProvider({ children }) {
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+
+  useEffect(() => {
+    const refreshForUser = () => setThemeState(readStoredTheme() || getSystemTheme());
+    window.addEventListener('mf-auth-user-changed', refreshForUser);
+    return () => window.removeEventListener('mf-auth-user-changed', refreshForUser);
+  }, []);
 
   useEffect(() => {
     // Follow system only until the user has explicitly chosen a theme.
