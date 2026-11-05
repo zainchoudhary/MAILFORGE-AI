@@ -27,6 +27,7 @@ function lazyPage(loader, key) {
     }
   });
 }
+const Landing = lazy(() => import('./pages/Landing'));
 const Overview = lazy(() => import('./pages/Overview'));
 const Compose = lazy(() => import('./pages/Compose'));
 const Campaigns = lazyPage(() => import('./pages/Campaigns'), 'campaigns');
@@ -63,11 +64,12 @@ export default function App() {
   return (
     <Suspense fallback={<WorkspaceBoot />}>
       <Routes>
+        <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route element={<Guard />}>
-          <Route index element={<Overview />} />
+          <Route path="overview" element={<Overview />} />
           <Route path="studio" element={<Studio />} />
           <Route path="compose" element={<Compose />} />
           <Route path="documents" element={<Documents />} />
@@ -84,7 +86,7 @@ export default function App() {
           <Route path="integrations" element={<Integrations />} />
           <Route path="audit" element={<Audit />} />
           <Route path="settings" element={<Settings />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
       </Routes>
     </Suspense>

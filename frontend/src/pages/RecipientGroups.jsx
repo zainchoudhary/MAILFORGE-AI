@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { FolderPlus, UsersRound, Pencil, Trash2, Search, Check, ListPlus, Eye, Mail, Building2 } from 'lucide-react';
+import { FolderPlus, UsersRound, Pencil, Trash2, Search, Check, ListPlus, ListChecks, Eye, Mail, Building2 } from 'lucide-react';
 import { useApi, useAction } from '../hooks/useApi';
 import { api } from '../services/api';
 import { BusyButton, ConfirmDialog, Empty, Field, PageHeader, QueryState } from '../components/Common';
@@ -24,6 +24,9 @@ export default function RecipientGroups() {
   const [search, setSearch] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [previewTarget, setPreviewTarget] = useState(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedGroupIds, setSelectedGroupIds] = useState([]);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const form = useForm({ resolver: zodResolver(schema), defaultValues: { name: '' } });
   const availableRecipients = recipients.data?.items || [];
   const groupCount = groups.data?.items.length || 0;
@@ -53,6 +56,18 @@ export default function RecipientGroups() {
     invalidatePrefixes: ['/recipient-groups'],
     onSuccess: () => setDeleteTarget(null),
   });
+  const bulkRemove = useAction(
+    async (ids) => (await api.post('/recipient-groups/bulk-delete', { group_ids: ids })).data,
+    (data) => `Deleted ${data.deleted} group${data.deleted === 1 ? '' : 's'}`,
+    {
+      invalidatePrefixes: ['/recipient-groups'],
+      onSuccess: () => {
+        setSelectedGroupIds([]);
+        setSelectionMode(false);
+        setBulkDeleteOpen(false);
+      },
+    },
+  );
   useEffect(() => {
     if (!open) form.clearErrors();
   }, [open, form]);
@@ -82,11 +97,64 @@ export default function RecipientGroups() {
         <div><span className="group-library-icon"><UsersRound size={16} /></span><p><strong>Broadcast lists</strong><small>Saved audiences ready for campaign selection.</small></p></div>
         <div className="group-library-stats"><span><strong>{groupCount}</strong> groups</span><span><strong>{savedMemberships}</strong> memberships</span></div>
       </div>
+      {groupCount > 0 && (
+        <div className="group-library-toolbar">
+          {selectionMode && <span className="selection-indicator"><ListChecks size={15} /> {selectedGroupIds.length} selected</span>}
+          <Button
+            variant={selectionMode ? 'default' : 'secondary'}
+            size="sm"
+            onClick={() => {
+              setSelectionMode((active) => !active);
+              if (selectionMode) setSelectedGroupIds([]);
+            }}
+          >
+            <ListChecks size={14} />
+            {selectionMode ? 'Cancel' : 'Select multiple'}
+          </Button>
+          {selectionMode && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                const pageIds = groups.data?.items?.map((group) => group.id) || [];
+                const allSelected = pageIds.length > 0 && pageIds.every((id) => selectedGroupIds.includes(id));
+                setSelectedGroupIds(allSelected
+                  ? selectedGroupIds.filter((id) => !pageIds.includes(id))
+                  : [...new Set([...selectedGroupIds, ...pageIds])]);
+              }}
+            >
+              {groups.data?.items?.length > 0 && groups.data.items.every((group) => selectedGroupIds.includes(group.id))
+                ? 'Deselect all'
+                : 'Select all'}
+            </Button>
+          )}
+          {selectionMode && selectedGroupIds.length > 0 && (
+            <Button variant="destructive" size="sm" onClick={() => setBulkDeleteOpen(true)}>
+              <Trash2 size={14} />
+              Delete {selectedGroupIds.length} selected
+            </Button>
+          )}
+        </div>
+      )}
       <QueryState query={groups}>
         {(data) => data.items.length ? (
           <section className="groups-grid">
-            {data.items.map((group) => (
-              <article className="group-card" key={group.id}>
+            {data.items.map((group) => {
+              const selected = selectedGroupIds.includes(group.id);
+              return (
+              <article className={`group-card${selectionMode && selected ? ' selected' : ''}`} key={group.id}>
+                {selectionMode && (
+                  <label className="group-card-check">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${group.name}`}
+                      checked={selected}
+                      onChange={(event) => setSelectedGroupIds((current) => (event.target.checked
+                        ? [...new Set([...current, group.id])]
+                        : current.filter((id) => id !== group.id)))}
+                    />
+                  </label>
+                )}
                 <div className="group-card-icon"><UsersRound size={19} /></div>
                 <div className="group-card-content"><h3>{group.name}</h3><p>{group.recipient_count} {group.recipient_count === 1 ? 'recipient' : 'recipients'} saved</p></div>
                 <div className="group-card-actions">
@@ -96,7 +164,8 @@ export default function RecipientGroups() {
                 </div>
                 <div className="group-card-members"><span><Check size={13} /> Ready for campaign selection</span><small>Updated {new Date(group.created_at).toLocaleDateString()}</small></div>
               </article>
-            ))}
+              );
+            })}
           </section>
         ) : <Empty title="Create your first recipient group" description="Select multiple contacts once, then reuse the group whenever you prepare a campaign." action={<Button onClick={() => openEditor()}><ListPlus size={16} /> Create group</Button>} />}
       </QueryState>
@@ -119,6 +188,14 @@ export default function RecipientGroups() {
         </form>
       </Dialog>
       <ConfirmDialog open={!!deleteTarget} onOpenChange={(value) => !value && setDeleteTarget(null)} title="Delete recipient group" itemLabel={deleteTarget?.name} message={<>Delete <strong>{deleteTarget?.name}</strong>? Contacts stay in your library; only this saved group is removed.</>} confirmLabel="Delete group" processingLabel="Deleting group…" onConfirm={() => remove.mutateAsync(deleteTarget.id)} />
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        onOpenChange={setBulkDeleteOpen}
+        title="Delete selected groups"
+        message={<p>This will remove {selectedGroupIds.length} saved group{selectedGroupIds.length === 1 ? '' : 's'}. Contacts stay in your library.</p>}
+        confirmLabel="Delete selected"
+        onConfirm={() => bulkRemove.mutateAsync(selectedGroupIds)}
+      />
       <Dialog open={!!previewTarget} onOpenChange={(value) => !value && setPreviewTarget(null)} title={previewTarget ? `${previewTarget.name} members` : 'Recipient group preview'} description="A read-only view of the people in this saved recipient group.">
         <div className="group-preview" aria-label="Recipient group members">
           <div className="group-preview-summary"><span><UsersRound size={16} /></span><div><strong>{previewTarget?.recipient_count || 0} saved members</strong><small>Member details are private to this workspace.</small></div></div>

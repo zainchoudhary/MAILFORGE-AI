@@ -25,6 +25,7 @@ from app.schemas.inputs import (
     RecipientInput,
     BulkRecipientDelete,
     BulkDocumentDelete,
+    BulkRecipientGroupDelete,
     BulkRecipientImport,
     RecipientGroupInput,
     TemplateInput,
@@ -290,6 +291,24 @@ def delete_recipient_group(identifier: str, user=Depends(editor), db=Depends(get
     audit(db, user, "recipient_group.deleted", group.id)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/recipient-groups/bulk-delete", tags=["Recipient groups"])
+def bulk_delete_recipient_groups(
+    data: BulkRecipientGroupDelete, user=Depends(editor), db=Depends(get_db)
+):
+    identifiers = list(dict.fromkeys(data.group_ids))
+    groups = [owned(db, RecipientGroup, identifier, user.organization_id) for identifier in identifiers]
+    group_ids = [group.id for group in groups]
+    db.execute(delete(GroupMember).where(
+        GroupMember.organization_id == user.organization_id,
+        GroupMember.group_id.in_(group_ids),
+    ))
+    for group in groups:
+        db.delete(group)
+        audit(db, user, "recipient_group.deleted", group.id)
+    db.commit()
+    return {"ok": True, "deleted": len(groups)}
 
 
 @router.post("/recipients/import", tags=["Recipients"])

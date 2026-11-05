@@ -7,7 +7,9 @@ import {
   Download,
   Eye,
   FileText,
+  ListChecks,
   Plus,
+  RefreshCw,
   Search,
   Send,
   X,
@@ -31,15 +33,62 @@ import {
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 import { EmailPreview } from '../components/RichEditor';
+
+const ACTIVE_CAMPAIGN_DELETE_BLOCKED = new Set(['processing', 'sending', 'scheduled']);
+
+function campaignBulkDeleteMessage(data) {
+  const skipped = data?.skipped?.length || 0;
+  const deleted = data?.deleted || 0;
+  if (!deleted && skipped) {
+    return `${skipped} campaign${skipped === 1 ? '' : 's'} can't be deleted while processing, sending, or scheduled.`;
+  }
+  if (skipped) {
+    return `Deleted ${deleted}. Skipped ${skipped} active campaign${skipped === 1 ? '' : 's'}.`;
+  }
+  return `Deleted ${deleted} campaign${deleted === 1 ? '' : 's'}`;
+}
+
 export default function Campaigns() {
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
+  const [sort, setSort] = useState('newest');
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const query = useApi(`/campaigns?page=${page}&q=${encodeURIComponent(q)}&status=${status}`, {
-    refetchInterval: 10000,
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const query = useApi(
+    `/campaigns?page=${page}&q=${encodeURIComponent(q)}&status=${status}&sort=${sort}`,
+    { refetchInterval: 10000 },
+  );
+  const remove = useAction((id) => api.delete(`/campaigns/${id}`), 'Campaign deleted', {
+    onSuccess: () => setDeleteTarget(null),
   });
-  const remove = useAction((id) => api.delete(`/campaigns/${id}`), 'Campaign deleted');
+  const bulkRemove = useAction(
+    async (ids) => (await api.post('/campaigns/bulk-delete', { campaign_ids: ids })).data,
+    (data) => {
+      if (!data?.deleted && data?.skipped?.length) return '';
+      return campaignBulkDeleteMessage(data);
+    },
+    {
+      invalidatePrefixes: ['/campaigns'],
+      onSuccess: (data) => {
+        setSelectedIds([]);
+        setSelectionMode(false);
+        setBulkDeleteOpen(false);
+        if (!data?.deleted && data?.skipped?.length) {
+          toast.error(campaignBulkDeleteMessage(data));
+        }
+      },
+    },
+  );
+  const tryDeleteCampaign = (campaign) => {
+    if (ACTIVE_CAMPAIGN_DELETE_BLOCKED.has(campaign.status)) {
+      toast.error(`This campaign is ${campaign.status.replace(/_/g, ' ')} and can't be deleted right now.`);
+      return;
+    }
+    setDeleteTarget(campaign);
+  };
   return (
     <>
       <PageHeader
@@ -47,6 +96,19 @@ export default function Campaigns() {
         title="Campaigns"
         description="Meaningful outreach, managed from first draft to final event."
       >
+        <Button
+          variant="secondary"
+          size="sm"
+          aria-label="Refresh campaigns"
+          title="Refresh"
+          disabled={query.isFetching}
+          onClick={() => {
+            query.refetch().then(() => toast.success('Campaigns refreshed'));
+          }}
+        >
+          <RefreshCw size={15} className={query.isFetching ? 'animate-spin' : ''} />
+          Refresh
+        </Button>
         <Button asChild>
           <Link to="/compose">
             <Plus size={16} />
@@ -88,7 +150,70 @@ export default function Campaigns() {
               ['cancelled', 'Cancelled', 'Delivery was stopped'],
             ].map(([value, label, description]) => ({ value, label, description }))}
           />
-          {(q || status) && <Button variant="ghost" size="sm" onClick={() => { setQ(''); setStatus(''); setPage(1); }}>Clear filters</Button>}
+          <PickerDropdown
+            ariaLabel="Sort campaigns by created date"
+            value={sort}
+            onChange={(value) => {
+              setSort(value);
+              setPage(1);
+            }}
+            placeholder="Newest first"
+            options={[
+              { value: 'newest', label: 'Newest first', description: 'Latest created date & time' },
+              { value: 'oldest', label: 'Oldest first', description: 'Earliest created date & time' },
+            ]}
+          />
+          {(q || status || sort !== 'newest') && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setQ('');
+                setStatus('');
+                setSort('newest');
+                setPage(1);
+              }}
+            >
+              Clear filters
+            </Button>
+          )}
+          {query.data?.total > 0 && (
+            <Button
+              variant={selectionMode ? 'default' : 'secondary'}
+              size="sm"
+              onClick={() => {
+                setSelectionMode((active) => !active);
+                if (selectionMode) setSelectedIds([]);
+              }}
+            >
+              <ListChecks size={14} />
+              {selectionMode ? 'Cancel' : 'Select multiple'}
+            </Button>
+          )}
+          {query.data?.total > 0 && selectionMode && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                const pageIds = query.data?.items?.map((campaign) => campaign.id) || [];
+                const allSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
+                setSelectedIds(allSelected
+                  ? selectedIds.filter((id) => !pageIds.includes(id))
+                  : [...new Set([...selectedIds, ...pageIds])]);
+              }}
+            >
+              {query.data?.items?.length > 0 && query.data.items.every((campaign) => selectedIds.includes(campaign.id))
+                ? 'Deselect all'
+                : 'Select all'}
+            </Button>
+          )}
+          {selectionMode && selectedIds.length > 0 && (
+            <Button variant="destructive" size="sm" onClick={() => setBulkDeleteOpen(true)}>
+              <Trash2 size={14} />
+              Delete {selectedIds.length} selected
+            </Button>
+          )}
+          {selectionMode && <span className="selection-indicator"><ListChecks size={15} /> {selectedIds.length} selected</span>}
         </div>
         <QueryState query={query}>
           {(d) => (
@@ -98,6 +223,7 @@ export default function Campaigns() {
                   <table>
                     <thead>
                       <tr>
+                        {selectionMode && <th className="table-check" aria-label="Selection" />}
                         <th>Campaign</th>
                         <th>Status</th>
                         <th>Created</th>
@@ -108,6 +234,18 @@ export default function Campaigns() {
                     <tbody>
                       {d.items.map((c) => (
                         <tr key={c.id}>
+                          {selectionMode && (
+                            <td className="table-check">
+                              <input
+                                type="checkbox"
+                                aria-label={`Select ${c.name}`}
+                                checked={selectedIds.includes(c.id)}
+                                onChange={(event) => setSelectedIds((current) => (event.target.checked
+                                  ? [...new Set([...current, c.id])]
+                                  : current.filter((id) => id !== c.id)))}
+                              />
+                            </td>
+                          )}
                           <td>
                             <Link className="table-title" to={`/campaigns/${c.id}`}>
                               {c.name}
@@ -126,9 +264,7 @@ export default function Campaigns() {
                               </Link>
                               <button
                                 aria-label={`Delete ${c.name}`}
-                                onClick={() => {
-                                  setDeleteTarget(c);
-                                }}
+                                onClick={() => tryDeleteCampaign(c)}
                               >
                                 <Trash2 size={16} />
                               </button>
@@ -155,6 +291,14 @@ export default function Campaigns() {
         itemLabel={deleteTarget?.name}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         onConfirm={() => remove.mutateAsync(deleteTarget.id)}
+      />
+      <ConfirmDialog
+        open={bulkDeleteOpen}
+        onOpenChange={setBulkDeleteOpen}
+        title="Delete selected campaigns"
+        message={<p>This will permanently remove {selectedIds.length} selected campaign{selectedIds.length === 1 ? '' : 's'}. Campaigns that are processing, sending, or scheduled will be skipped.</p>}
+        confirmLabel="Delete selected"
+        onConfirm={() => bulkRemove.mutateAsync(selectedIds)}
       />
     </>
   );

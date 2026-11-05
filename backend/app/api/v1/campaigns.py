@@ -5,7 +5,7 @@ from fastapi.responses import Response
 from sqlalchemy import delete, select
 from app.database.session import get_db
 from app.security.auth import current_user, editor
-from app.schemas.inputs import CampaignInput, Approval, TestEmail
+from app.schemas.inputs import CampaignInput, Approval, TestEmail, BulkCampaignDelete
 from app.models.entities import (
     Campaign,
     EmailMessage,
@@ -22,11 +22,33 @@ from app.services import campaigns as service
 
 router = APIRouter(tags=["Campaigns"])
 
+ACTIVE_CAMPAIGN_DELETE_BLOCKED = ("processing", "sending", "scheduled")
+
+
+def _campaign_delete_blocked_message(status: str) -> str:
+    label = status.replace("_", " ")
+    return f"This campaign is {label} and can't be deleted right now."
+
+
+def _purge_campaign(db, user, item: Campaign) -> None:
+    message_ids = select(EmailMessage.id).where(EmailMessage.campaign_id == item.id)
+    db.execute(delete(DeliveryAttempt).where(DeliveryAttempt.message_id.in_(message_ids)))
+    db.execute(delete(EmailEvent).where(EmailEvent.message_id.in_(message_ids)))
+    # Message attachments have message_id set and campaign_id unset.
+    db.execute(delete(Attachment).where(Attachment.message_id.in_(message_ids)))
+    db.execute(delete(Attachment).where(Attachment.campaign_id == item.id))
+    db.execute(delete(EmailMessage).where(EmailMessage.campaign_id == item.id))
+    db.execute(delete(CampaignRecipient).where(CampaignRecipient.campaign_id == item.id))
+    db.execute(delete(ScheduledCampaign).where(ScheduledCampaign.campaign_id == item.id))
+    db.delete(item)
+    audit(db, user, "campaign.deleted", item.id)
+
 
 @router.get("/campaigns")
 def campaigns(
     q: str = "",
     status: str = "",
+    sort: str = "newest",
     page_number: int = Query(1, ge=1, alias="page"),
     limit: int = Query(25, ge=1, le=100),
     user=Depends(current_user),
@@ -37,7 +59,17 @@ def campaigns(
         conditions.append(Campaign.name.ilike(f"%{q}%"))
     if status:
         conditions.append(Campaign.status == status)
-    return page(db, Campaign, user.organization_id, page_number, limit, conditions)
+    if sort not in ("newest", "oldest"):
+        raise HTTPException(422, "Invalid sort order")
+    # Always sort by created date/time; id breaks ties for stable paging.
+    order = (
+        Campaign.created_at.desc(),
+        Campaign.id.desc(),
+    ) if sort == "newest" else (
+        Campaign.created_at.asc(),
+        Campaign.id.asc(),
+    )
+    return page(db, Campaign, user.organization_id, page_number, limit, conditions, order)
 
 
 @router.post("/campaigns", status_code=201)
@@ -58,22 +90,35 @@ def update(identifier: str, data: CampaignInput, user=Depends(editor), db=Depend
     )
 
 
+@router.post("/campaigns/bulk-delete")
+def bulk_delete_campaigns(data: BulkCampaignDelete, user=Depends(editor), db=Depends(get_db)):
+    identifiers = list(dict.fromkeys(data.campaign_ids))
+    deleted = 0
+    skipped = []
+    for identifier in identifiers:
+        item = owned(db, Campaign, identifier, user.organization_id)
+        if item.status in ACTIVE_CAMPAIGN_DELETE_BLOCKED:
+            skipped.append(
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "status": item.status,
+                    "reason": _campaign_delete_blocked_message(item.status),
+                }
+            )
+            continue
+        _purge_campaign(db, user, item)
+        deleted += 1
+    db.commit()
+    return {"ok": True, "deleted": deleted, "skipped": skipped}
+
+
 @router.delete("/campaigns/{identifier}")
 def delete_campaign(identifier: str, user=Depends(editor), db=Depends(get_db)):
     item = owned(db, Campaign, identifier, user.organization_id)
-    if item.status in ("processing", "sending", "scheduled"):
-        raise HTTPException(409, "Pause or cancel an active campaign before deleting it")
-    message_ids = select(EmailMessage.id).where(EmailMessage.campaign_id == item.id)
-    db.execute(delete(DeliveryAttempt).where(DeliveryAttempt.message_id.in_(message_ids)))
-    db.execute(delete(EmailEvent).where(EmailEvent.message_id.in_(message_ids)))
-    # Message attachments have message_id set and campaign_id unset.
-    db.execute(delete(Attachment).where(Attachment.message_id.in_(message_ids)))
-    db.execute(delete(Attachment).where(Attachment.campaign_id == item.id))
-    db.execute(delete(EmailMessage).where(EmailMessage.campaign_id == item.id))
-    db.execute(delete(CampaignRecipient).where(CampaignRecipient.campaign_id == item.id))
-    db.execute(delete(ScheduledCampaign).where(ScheduledCampaign.campaign_id == item.id))
-    db.delete(item)
-    audit(db, user, "campaign.deleted", identifier)
+    if item.status in ACTIVE_CAMPAIGN_DELETE_BLOCKED:
+        raise HTTPException(409, _campaign_delete_blocked_message(item.status))
+    _purge_campaign(db, user, item)
     db.commit()
     return {"ok": True}
 

@@ -19,7 +19,7 @@ export function ForgotPassword() {
   const [sent, setSent] = useState(false);
   const form = useForm({ resolver: zodResolver(z.object({ email: z.string().email('Enter a valid email address') })) });
   const action = useAction((data) => api.post('/auth/forgot-password', data), '', { onSuccess: () => setSent(true) });
-  if (auth.authenticated) return <Navigate to="/" replace />;
+  if (auth.authenticated) return <Navigate to="/overview" replace />;
   return <AuthRecoveryFrame eyebrow="PASSWORD RECOVERY" title={sent ? 'Check your email' : 'Reset your password'} description={sent ? 'If that email belongs to an account, we’ve sent a secure reset link.' : 'Enter your work email and we’ll send you a secure reset link.'}>{sent ? <><div className="auth-recovery-success"><CheckCircle2 /><span>Link sent. It expires in 2 minutes.</span></div><Link className="auth-back-link" to="/login"><ArrowLeft size={15} /> Back to sign in</Link></> : <form noValidate onSubmit={form.handleSubmit((value) => action.mutate(value))}><Field label="Work email" required error={form.formState.errors.email}><div className="auth-input-wrap"><Mail /><input type="email" autoComplete="email" placeholder="you@company.com" {...form.register('email')} /></div></Field><BusyButton busy={action.isPending} className="auth-submit w-full" type="submit">{action.isPending ? 'Sending link…' : 'Send reset link'}<ArrowRight size={16} /></BusyButton><Link className="auth-back-link" to="/login"><ArrowLeft size={15} /> Back to sign in</Link></form>}</AuthRecoveryFrame>;
 }
 
@@ -46,7 +46,7 @@ export function ResetPassword() {
       .catch(() => { if (current) setLinkState('unavailable'); });
     return () => { current = false; };
   }, [token]);
-  if (auth.authenticated) return <Navigate to="/" replace />;
+  if (auth.authenticated) return <Navigate to="/overview" replace />;
   if (!token) return <AuthRecoveryFrame eyebrow="INVALID LINK" title="Reset link missing" description="Please request a new password reset link and open it from your email."><Link className="auth-back-link" to="/forgot-password"><ArrowLeft size={15} /> Request a new link</Link></AuthRecoveryFrame>;
   if (linkState === 'checking') return <AuthRecoveryFrame eyebrow="VERIFYING LINK" title="Checking your secure link" description="Please wait a moment while we verify your password reset request." />;
   if (linkState === 'expired') return <AuthRecoveryFrame eyebrow="LINK EXPIRED" title="This reset link has expired" description="For your protection, password reset links are valid for only 2 minutes and can be used once."><Link className="auth-submit auth-reset-login" to="/forgot-password">Request a new link <ArrowRight size={16} /></Link><Link className="auth-back-link" to="/login"><ArrowLeft size={15} /> Back to sign in</Link></AuthRecoveryFrame>;

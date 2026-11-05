@@ -369,3 +369,59 @@ def test_private_preview_and_template_attachment_lifecycle(client, account):
     assert len(client.get(url, headers=account).json()["items"]) == 1
     assert client.delete(url + "/" + doc["id"], headers=account).status_code == 200
     assert client.get(url, headers=account).json()["items"] == []
+
+
+def test_bulk_delete_campaigns_skips_active_and_deletes_drafts(client, account, db):
+    contact = recipient(client, account)
+    draft = campaign(client, account, [contact["id"]])
+    blocked = campaign(client, account, [contact["id"]], name="Active campaign")
+    record = db.get(Campaign, blocked["id"])
+    record.status = "processing"
+    db.commit()
+
+    blocked_delete = client.delete(f"/api/v1/campaigns/{blocked['id']}", headers=account)
+    assert blocked_delete.status_code == 409
+    assert "processing" in blocked_delete.json()["detail"]
+    assert "can't be deleted" in blocked_delete.json()["detail"]
+
+    result = client.post(
+        "/api/v1/campaigns/bulk-delete",
+        headers=account,
+        json={"campaign_ids": [draft["id"], blocked["id"]]},
+    )
+    assert result.status_code == 200, result.text
+    payload = result.json()
+    assert payload["deleted"] == 1
+    assert len(payload["skipped"]) == 1
+    assert payload["skipped"][0]["id"] == blocked["id"]
+    assert payload["skipped"][0]["status"] == "processing"
+    assert db.get(Campaign, draft["id"]) is None
+    assert db.get(Campaign, blocked["id"]) is not None
+
+
+def test_bulk_delete_recipient_groups(client, account, db):
+    first = recipient(client, account, "one@example.com")
+    second = recipient(client, account, "two@example.com")
+    third = recipient(client, account, "three@example.com")
+    fourth = recipient(client, account, "four@example.com")
+    group_a = client.post(
+        "/api/v1/recipient-groups",
+        headers=account,
+        json={"name": "Group A", "recipient_ids": [first["id"], second["id"]]},
+    ).json()
+    group_b = client.post(
+        "/api/v1/recipient-groups",
+        headers=account,
+        json={"name": "Group B", "recipient_ids": [third["id"], fourth["id"]]},
+    ).json()
+    result = client.post(
+        "/api/v1/recipient-groups/bulk-delete",
+        headers=account,
+        json={"group_ids": [group_a["id"], group_b["id"]]},
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["deleted"] == 2
+    assert db.get(RecipientGroup, group_a["id"]) is None
+    assert db.get(RecipientGroup, group_b["id"]) is None
+    from app.models.entities import Recipient
+    assert db.get(Recipient, first["id"]) is not None

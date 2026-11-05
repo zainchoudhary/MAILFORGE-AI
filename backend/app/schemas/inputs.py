@@ -76,6 +76,14 @@ class BulkDocumentDelete(Input):
     document_ids: list[str] = Field(min_length=1, max_length=1000)
 
 
+class BulkCampaignDelete(Input):
+    campaign_ids: list[str] = Field(min_length=1, max_length=1000)
+
+
+class BulkRecipientGroupDelete(Input):
+    group_ids: list[str] = Field(min_length=1, max_length=1000)
+
+
 class BulkRecipientImport(Input):
     recipients: list[RecipientInput] = Field(min_length=1, max_length=1000)
 

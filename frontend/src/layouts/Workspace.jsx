@@ -37,7 +37,7 @@ const groups = [
   [
     'WORKSPACE',
     [
-      ['Overview', '/', LayoutDashboard],
+      ['Overview', '/overview', LayoutDashboard],
       ['AI Agent Studio', '/studio', Bot],
       ['Recipients', '/recipients', Users],
       ['Recipient groups', '/recipient-groups', UserRoundPlus],
@@ -112,7 +112,7 @@ export default function Workspace() {
       {open && <div className="sidebar-backdrop" onClick={() => setOpen(false)} />}
       <aside className={`sidebar ${open ? 'open' : ''}`}>
         <div className="sidebar-heading-row">
-        <NavLink to="/" aria-label="Outreach Studio home"><Brand /></NavLink>
+        <NavLink to="/overview" aria-label="Outreach Studio home"><Brand /></NavLink>
         <button
           type="button"
           className="sidebar-collapse-toggle"
@@ -151,7 +151,7 @@ export default function Workspace() {
                   title={collapsed ? title : undefined}
                   aria-label={title}
                   to={url}
-                  end={url === '/'}
+                  end={url === '/overview'}
                   className={({ isActive }) => `nav-link ${isActive || (url === '/campaigns' && location.pathname === '/compose') ? 'active' : ''}`}
                 >
                   <Icon size={17} />

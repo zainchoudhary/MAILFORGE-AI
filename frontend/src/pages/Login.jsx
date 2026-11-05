@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { Mail, ShieldCheck, Sparkles, ArrowRight, Eye, EyeOff, UserRound, Building2, LockKeyhole, Check } from 'lucide-react';
 import { api } from '../services/api';
 import { useAction } from '../hooks/useApi';
@@ -10,7 +10,8 @@ import { useAuth } from '../context/AuthContext';
 import { Field, BusyButton } from '../components/Common';
 import { Brand } from '../components/Brand';
 export default function Login() {
-  const [register, setRegister] = useState(false);
+  const [searchParams] = useSearchParams();
+  const [register, setRegister] = useState(searchParams.get('register') === '1');
   const [showPassword, setShowPassword] = useState(false);
   const auth = useAuth();
   const schema = z.object({
@@ -39,7 +40,7 @@ export default function Login() {
     const { data } = await api.post(`/auth/${register ? 'register' : 'login'}`, values);
     auth.login(data);
   }, 'Welcome to Outreach Studio');
-  if (auth.authenticated) return <Navigate to="/" replace />;
+  if (auth.authenticated) return <Navigate to="/overview" replace />;
   return (
     <div className="auth-page">
       <section className="auth-story" aria-label="Outreach Studio overview">

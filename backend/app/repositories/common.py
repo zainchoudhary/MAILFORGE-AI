@@ -19,11 +19,13 @@ def serialize(record, exclude=()):
 def page(db, model, org, page=1, limit=25, conditions=(), order=None):
     query = select(model).where(model.organization_id == org, *conditions)
     total = db.scalar(select(func.count()).select_from(query.subquery()))
-    records = db.scalars(
-        query.order_by(order if order is not None else model.created_at.desc())
-        .offset((page - 1) * limit)
-        .limit(limit)
-    ).all()
+    if order is None:
+        query = query.order_by(model.created_at.desc())
+    elif isinstance(order, (tuple, list)):
+        query = query.order_by(*order)
+    else:
+        query = query.order_by(order)
+    records = db.scalars(query.offset((page - 1) * limit).limit(limit)).all()
     return {"items": [serialize(r) for r in records], "total": total, "page": page, "limit": limit}
 
 
