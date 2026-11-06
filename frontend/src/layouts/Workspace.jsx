@@ -40,6 +40,7 @@ const groups = [
     [
       ['Overview', '/overview', LayoutDashboard],
       ['AI Agent Studio', '/studio', Bot],
+      ['Lead Finder', '/lead-finder', Search],
       ['Recipients', '/recipients', Users],
       ['Recipient groups', '/recipient-groups', UserRoundPlus],
       ['Campaign', '/campaigns', Mail],

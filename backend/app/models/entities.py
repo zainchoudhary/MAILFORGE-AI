@@ -88,6 +88,35 @@ class GroupMember(Tenant, Base):
     recipient_id: Mapped[str] = mapped_column(ForeignKey("recipients.id"))
 
 
+class LeadSearchRun(Tenant, Base):
+    __tablename__ = "lead_search_runs"
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    instruction: Mapped[str] = mapped_column(Text)
+    brief: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
+    target_count: Mapped[int] = mapped_column(Integer, default=20)
+    progress: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class LeadCandidate(Tenant, Base):
+    __tablename__ = "lead_candidates"
+    __table_args__ = (UniqueConstraint("run_id", "email"),)
+    run_id: Mapped[str] = mapped_column(ForeignKey("lead_search_runs.id"), index=True)
+    email: Mapped[str] = mapped_column(String(320))
+    name: Mapped[str] = mapped_column(String(200), default="")
+    company: Mapped[str] = mapped_column(String(200), default="")
+    position: Mapped[str] = mapped_column(String(200), default="")
+    source_url: Mapped[str] = mapped_column(Text, default="")
+    source_title: Mapped[str] = mapped_column(String(500), default="")
+    snippet: Mapped[str] = mapped_column(Text, default="")
+    score: Mapped[float] = mapped_column(default=0)
+    signals: Mapped[dict] = mapped_column(JSON, default=dict)
+    selected: Mapped[bool] = mapped_column(Boolean, default=False)
+    existing_recipient_id: Mapped[str | None] = mapped_column(ForeignKey("recipients.id"))
+
+
 class Consent(Tenant, Base):
     __tablename__ = "recipient_consents"
     recipient_id: Mapped[str] = mapped_column(ForeignKey("recipients.id"), index=True)

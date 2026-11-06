@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     require_malware_scan: bool = False
     allow_private_smtp: bool = False
     provider_webhook_secret: str = ""
+    lead_search_provider: str = "serper"  # serper | google_cse
+    serper_api_key: str = ""
+    google_cse_api_key: str = ""
+    google_cse_cx: str = ""
+    lead_finder_max_per_run: int = 100
+    lead_finder_first_batch: int = 20
+    lead_finder_fetch_timeout: int = 15
+    lead_finder_max_page_bytes: int = 1500000
+    lead_finder_allow_private_fetch: bool = False
 
     @model_validator(mode="after")
     def secrets(self):

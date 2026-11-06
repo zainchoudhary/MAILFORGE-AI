@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Link } from 'react-router-dom';
-import { Plus, Plug, ShieldCheck, CheckCheck, KeyRound, ArrowUpRight, Trash2 } from 'lucide-react';
+import { Plus, Plug, ShieldCheck, CheckCheck, KeyRound, ArrowUpRight, Trash2, Search } from 'lucide-react';
 import { useApi, useAction } from '../hooks/useApi';
 import { api } from '../services/api';
 import {
@@ -342,6 +342,22 @@ export function Integrations() {
                 </Button>
               </section>
             ))}
+            <section className="panel integration-card">
+              <Search size={25} />
+              <small>OPTIONAL</small>
+              <h3>Lead Finder search</h3>
+              <p>
+                Set LEAD_SEARCH_PROVIDER to serper with SERPER_API_KEY, or to google_cse with
+                GOOGLE_CSE_API_KEY and GOOGLE_CSE_CX. LEAD_FINDER_MAX_PER_RUN and
+                LEAD_FINDER_FIRST_BATCH bound each run. Review candidates before saving a recipient
+                group.
+              </p>
+              <Button variant="secondary" asChild>
+                <Link to="/lead-finder">
+                  Open Lead Finder <ArrowUpRight size={15} />
+                </Link>
+              </Button>
+            </section>
             <section className="panel integration-card">
               <KeyRound size={25} />
               <small>SIGNED EVENT ADAPTER</small>

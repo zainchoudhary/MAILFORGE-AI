@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Literal
 import bleach
@@ -204,3 +205,48 @@ class TestEmail(Input):
 class SuppressionInput(Input):
     email: EmailStr
     reason: str = Field(min_length=1, max_length=2000)
+
+
+class LeadFinderRunInput(Input):
+    instruction: str = Field(min_length=3, max_length=4000)
+    target_count: int | None = Field(default=None, ge=1, le=100)
+
+    @field_validator("instruction")
+    @classmethod
+    def trimmed_instruction(cls, value):
+        value = value.strip()
+        if len(value) < 3:
+            raise ValueError("Instruction is required")
+        return value
+
+
+class LeadCandidatePatch(Input):
+    email: str | None = Field(default=None, max_length=320)
+    name: str | None = Field(default=None, max_length=200)
+    company: str | None = Field(default=None, max_length=200)
+    position: str | None = Field(default=None, max_length=200)
+    selected: bool | None = None
+
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, value):
+        if value is None:
+            return value
+        # Syntax-only check: extracted leads may use reserved/special-use domains (e.g. .test).
+        value = value.strip().lower()
+        if not re.fullmatch(r"[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;.]{2,}", value):
+            raise ValueError("Enter a valid email address")
+        return value
+
+
+class LeadFinderSaveGroupInput(Input):
+    group_name: str = Field(min_length=1, max_length=200)
+    candidate_ids: list[str] | None = Field(default=None, max_length=1000)
+
+    @field_validator("group_name")
+    @classmethod
+    def required_group_name(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Group name is required")
+        return value

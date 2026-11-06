@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from app.core.config import get_settings
 from app.database.session import SessionLocal
-from app.api.v1 import auth, resources, campaigns, intelligence, public
+from app.api.v1 import auth, resources, campaigns, intelligence, public, lead_finder
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("mailforge")
@@ -35,7 +35,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=s.cors_origins.split(","),
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Mailforge-Signature"],
 )
 
@@ -98,5 +98,5 @@ def health():
         return JSONResponse({"status": "unavailable"}, status_code=503)
 
 
-for router in (auth.router, resources.router, campaigns.router, intelligence.router, public.router):
+for router in (auth.router, resources.router, campaigns.router, intelligence.router, public.router, lead_finder.router):
     app.include_router(router, prefix="/api/v1")

@@ -44,6 +44,7 @@ const EmailDetail = lazy(() =>
 );
 const Templates = lazy(() => import('./pages/Templates'));
 const Studio = lazy(() => import('./pages/Studio'));
+const LeadFinder = lazy(() => import('./pages/LeadFinder'));
 const Analytics = lazy(() => import('./pages/Analytics'));
 import { SMTP, Settings, Integrations, Audit, Automation } from './pages/Configuration';
 function Guard() {
@@ -71,6 +72,7 @@ export default function App() {
         <Route element={<Guard />}>
           <Route path="overview" element={<Overview />} />
           <Route path="studio" element={<Studio />} />
+          <Route path="lead-finder" element={<LeadFinder />} />
           <Route path="compose" element={<Compose />} />
           <Route path="documents" element={<Documents />} />
           <Route path="campaigns" element={<Campaigns />} />

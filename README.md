@@ -42,11 +42,19 @@ Edit `.env` on the server:
 AI_PROVIDER=groq
 GROQ_API_KEY=your_server_side_key
 GROQ_MODEL=openai/gpt-oss-20b
+LEAD_SEARCH_PROVIDER=serper
+SERPER_API_KEY=your_serper_key
+GOOGLE_CSE_API_KEY=
+GOOGLE_CSE_CX=
+LEAD_FINDER_MAX_PER_RUN=100
+LEAD_FINDER_FIRST_BATCH=20
 ```
 
 Or set `AI_PROVIDER=gemini`, `GOOGLE_API_KEY`, and `GEMINI_MODEL` to a model available to your account. Model identifiers are configurable because availability changes. Restart backend, worker, and scheduler after changing configuration.
 
-Without an API key, AI generation returns an explicit configuration error and records the failed agent execution. It does not fabricate generated copy. Document extraction, drafting, templates, recipient review, analytics, and safe dry runs work independently of an LLM key. Requested email content and selected campaign context are sent to the configured AI provider; raw uploaded documents are parsed locally for deterministic extraction.
+Lead Finder uses `LEAD_SEARCH_PROVIDER` plus `SERPER_API_KEY`, or `GOOGLE_CSE_API_KEY` and `GOOGLE_CSE_CX`. Set `LEAD_SEARCH_PROVIDER` to `serper` or `google_cse`. `LEAD_FINDER_MAX_PER_RUN` (default 100) caps a run; `LEAD_FINDER_FIRST_BATCH` (default 20) is the first preview batch. A Celery worker continues later batches. Candidates stay in human review until someone saves a recipient group. Search does not invent email addresses.
+
+Without an API key, AI generation returns an explicit configuration error and records the failed agent execution. It does not fabricate generated copy. Document extraction, drafting, templates, recipient review, analytics, and safe dry runs work independently of an LLM key. Requested email content and selected campaign context are sent to the configured AI provider; raw uploaded documents are parsed locally for deterministic extraction. Lead Finder search stays disabled until its provider key is set and returns a configuration error instead of fabricated contacts.
 
 ## Your first workflow
 
@@ -66,6 +74,7 @@ Without an API key, AI generation returns an explicit configuration error and re
 
 - Overview dashboard, charts, real metrics, and empty/error/loading states.
 - AI Agent Studio with bounded planning, composition, document-extraction requests, actual failure context, prepared drafts, and execution logs. The LLM cannot approve campaigns or execute arbitrary tools.
+- Lead Finder: natural-language recruiter search over public web results, editable candidates, and human review before saving a recipient group. Later batches run on the Celery worker.
 - Rich email composer, CC/BCC, personalization, drafts, previews, attachments, templates, and schedules.
 - Private document library, extraction review table, cross-document recipient deduplication, PDF/image/text previews, authenticated downloads.
 - Campaign editing before delivery, duplication, recipient-template assignment, review/dry-run/approval, pause/resume/cancel, eligible failure retries, CSV reports.
