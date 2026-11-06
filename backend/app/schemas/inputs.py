@@ -239,6 +239,13 @@ class LeadCandidatePatch(Input):
         return value
 
 
+class LeadCandidatesSelectionInput(Input):
+    """Bulk select / deselect for Select all — one request instead of N PATCHes."""
+
+    selected: bool
+    candidate_ids: list[str] = Field(min_length=1, max_length=200)
+
+
 class LeadFinderSaveGroupInput(Input):
     group_name: str = Field(min_length=1, max_length=200)
     candidate_ids: list[str] | None = Field(default=None, max_length=1000)

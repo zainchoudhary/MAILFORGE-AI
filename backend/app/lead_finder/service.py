@@ -61,12 +61,14 @@ def create_run(db: Session, user, instruction: str, target_count: int | None) ->
     db.flush()
     audit(db, user, "lead_finder.run_created", run.id, {"target_count": target})
     db.commit()
-    enqueue_or_run(run.id, generation=1)
+    # Chunk size is first_batch; workers auto-continue until target or search stalls.
+    enqueue_or_run(run.id, batch_limit=min(target, _first_batch()), generation=1)
     db.refresh(run)
     return run
 
 
 WORKER_UNAVAILABLE = "Lead Finder worker unavailable; please try again shortly"
+_MAX_AUTO_BATCHES = 40
 
 
 def enqueue_or_run(
@@ -74,11 +76,13 @@ def enqueue_or_run(
 ) -> None:
     """Hand the run to Celery. Runs inline only when no broker is configured (local dev);
     a configured but unreachable broker marks the run failed instead of blocking the request.
+
+    After each successful batch, ``schedule_next_batch_if_needed`` (Celery) or the inline
+    loop below keeps going until ``target_count`` is reached or a batch finds nothing new.
     """
     limit = batch_limit if batch_limit is not None else _first_batch()
     if not get_settings().redis_url:
-        with SessionLocal() as session:
-            run_lead_batch(session, run_id, batch_limit=limit, generation=generation)
+        _run_batches_inline(run_id, limit=limit, generation=generation)
         return
     try:
         from app.workers.tasks import run_lead_finder_batch
@@ -87,6 +91,86 @@ def enqueue_or_run(
     except Exception:
         logger.warning("Lead Finder broker unavailable; marking run failed", exc_info=True)
         _mark_worker_unavailable(run_id, generation)
+
+
+def _run_batches_inline(run_id: str, *, limit: int, generation: int | None) -> None:
+    """Local-dev path: keep running batches until the target is met or search stalls."""
+    gen = generation
+    chunk = limit
+    with SessionLocal() as session:
+        for _ in range(_MAX_AUTO_BATCHES):
+            before = candidate_count(session, run_id)
+            run_lead_batch(session, run_id, batch_limit=chunk, generation=gen)
+            session.expire_all()
+            run = session.get(LeadSearchRun, run_id)
+            if run is None:
+                return
+            after = candidate_count(session, run_id)
+            if run.status != "ready" or after >= run.target_count:
+                return
+            if after <= before:
+                progress = dict(run.progress or {})
+                run.progress = {
+                    **progress,
+                    "message": f"Found {after} of {run.target_count}; no more new leads from search",
+                }
+                session.commit()
+                return
+            gen = int((run.progress or {}).get("batch_generation") or 0) + 1
+            chunk = min(run.target_count - after, _first_batch())
+            run.status = "queued"
+            run.progress = {
+                **(run.progress or {}),
+                "batch_generation": gen,
+                "auto_batches": int((run.progress or {}).get("auto_batches") or 0) + 1,
+                "message": f"Continuing toward {run.target_count}…",
+                "warning": "",
+            }
+            session.commit()
+
+
+def schedule_next_batch_if_needed(run_id: str, kept_before: int, generation: int | None) -> None:
+    """After a Celery batch, queue another chunk if the target is not met and progress was made."""
+    with SessionLocal() as session:
+        run = session.get(LeadSearchRun, run_id)
+        if run is None or run.status != "ready":
+            return
+        progress = dict(run.progress or {})
+        if generation is not None and progress.get("batch_generation") != generation:
+            return
+        kept = candidate_count(session, run.id)
+        if kept >= run.target_count:
+            return
+        if kept <= kept_before:
+            run.progress = {
+                **progress,
+                "message": f"Found {kept} of {run.target_count}; no more new leads from search",
+            }
+            session.commit()
+            return
+        auto = int(progress.get("auto_batches") or 0)
+        if auto >= _MAX_AUTO_BATCHES:
+            run.progress = {
+                **progress,
+                "message": f"Found {kept} of {run.target_count}; stopped after {_MAX_AUTO_BATCHES} search rounds",
+            }
+            session.commit()
+            return
+        next_gen = int(progress.get("batch_generation") or 0) + 1
+        remaining = run.target_count - kept
+        run.status = "queued"
+        run.error = None
+        run.progress = {
+            **progress,
+            "batch_generation": next_gen,
+            "auto_batches": auto + 1,
+            "message": f"Continuing toward {run.target_count}…",
+            "warning": "",
+        }
+        session.commit()
+        enqueue_or_run(
+            run.id, batch_limit=min(remaining, _first_batch()), generation=next_gen
+        )
 
 
 def _mark_worker_unavailable(run_id: str, generation: int | None) -> None:

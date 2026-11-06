@@ -6,7 +6,12 @@ from app.lead_finder import service
 from app.lead_finder.extract import normalize_email
 from app.models.entities import LeadCandidate, LeadSearchRun, Recipient, Suppression
 from app.repositories.common import audit, owned, page, serialize
-from app.schemas.inputs import LeadCandidatePatch, LeadFinderRunInput, LeadFinderSaveGroupInput
+from app.schemas.inputs import (
+    LeadCandidatePatch,
+    LeadCandidatesSelectionInput,
+    LeadFinderRunInput,
+    LeadFinderSaveGroupInput,
+)
 from app.security.auth import current_user, editor
 
 router = APIRouter(prefix="/lead-finder", tags=["Lead Finder"])
@@ -71,6 +76,70 @@ def list_candidates(
         [LeadCandidate.run_id == run_id],
         order=(LeadCandidate.score.desc(), LeadCandidate.email),
     )
+
+
+@router.post("/runs/{run_id}/candidates/selection")
+def set_candidates_selection(
+    run_id: str,
+    data: LeadCandidatesSelectionInput,
+    user=Depends(editor),
+    db=Depends(get_db),
+):
+    """Set selected on many candidates in one request (avoids rate-limit storms from Select all)."""
+    org = user.organization_id
+    owned(db, LeadSearchRun, run_id, org)
+    ids = list(dict.fromkeys(data.candidate_ids))
+    candidates = list(
+        db.scalars(
+            select(LeadCandidate).where(
+                LeadCandidate.organization_id == org,
+                LeadCandidate.run_id == run_id,
+                LeadCandidate.id.in_(ids),
+            )
+        )
+    )
+    if len(candidates) != len(ids):
+        raise HTTPException(404, "One or more candidates were not found on this run")
+    suppressed = set(
+        db.scalars(
+            select(Suppression.email).where(
+                Suppression.organization_id == org,
+                Suppression.email.in_([c.email for c in candidates]),
+            )
+        )
+    )
+    if data.selected and suppressed and len(suppressed) == len(candidates):
+        raise HTTPException(422, "All selected emails are on the suppression list")
+    updated = 0
+    skipped_suppressed = 0
+    for candidate in candidates:
+        if data.selected and candidate.email in suppressed:
+            if candidate.selected:
+                candidate.selected = False
+                updated += 1
+            skipped_suppressed += 1
+            continue
+        if candidate.selected != data.selected:
+            candidate.selected = data.selected
+            updated += 1
+    audit(
+        db,
+        user,
+        "lead_finder.candidates_selection",
+        run_id,
+        {
+            "selected": data.selected,
+            "count": len(candidates),
+            "updated": updated,
+            "skipped_suppressed": skipped_suppressed,
+        },
+    )
+    db.commit()
+    return {
+        "updated": updated,
+        "selected": data.selected,
+        "skipped_suppressed": skipped_suppressed,
+    }
 
 
 @router.patch("/runs/{run_id}/candidates/{candidate_id}")

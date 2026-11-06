@@ -208,21 +208,18 @@ def test_lower_score_does_not_overwrite(db, account, monkeypatch):
     assert row.source_url == "https://acme.test/team"
 
 
-def test_existing_recipient_linked(db, account, monkeypatch):
+def test_existing_recipient_skipped_not_shown(db, account, monkeypatch):
     run, user = _make_run(db)
-    rec = Recipient(organization_id=user.organization_id, email="jane.doe@acme.test", name="Jane")
-    gone = Recipient(
-        organization_id=user.organization_id, email="other@acme.test", deleted=True
+    db.add(
+        Recipient(organization_id=user.organization_id, email="jane.doe@acme.test", name="Jane")
     )
-    db.add_all([rec, gone])
     db.commit()
     _mock_web(monkeypatch)
     run_lead_batch(db, run.id, batch_limit=20)
-    row = next(r for r in _rows(db, run) if r.email == "jane.doe@acme.test")
-    assert row.existing_recipient_id == rec.id
+    assert all(r.email != "jane.doe@acme.test" for r in _rows(db, run))
 
 
-def test_deleted_recipient_not_linked(db, account, monkeypatch):
+def test_deleted_recipient_can_appear_again(db, account, monkeypatch):
     run, user = _make_run(db)
     db.add(
         Recipient(organization_id=user.organization_id, email="jane.doe@acme.test", deleted=True)
@@ -234,15 +231,13 @@ def test_deleted_recipient_not_linked(db, account, monkeypatch):
     assert row.existing_recipient_id is None
 
 
-def test_suppressed_email_forced_unselected(db, account, monkeypatch):
+def test_suppressed_email_skipped_not_shown(db, account, monkeypatch):
     run, user = _make_run(db)
     db.add(Suppression(organization_id=user.organization_id, email="jane.doe@acme.test", reason="x"))
     db.commit()
     _mock_web(monkeypatch)
     summary = run_lead_batch(db, run.id, batch_limit=20)
-    row = next(r for r in _rows(db, run) if r.email == "jane.doe@acme.test")
-    assert row.selected is False
-    assert row.signals.get("suppressed") is True
+    assert all(r.email != "jane.doe@acme.test" for r in _rows(db, run))
     assert summary["suppressed"] >= 1
 
 

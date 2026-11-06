@@ -191,6 +191,38 @@ def test_candidates_list_and_patch(client, account, db):
     assert bad.status_code == 422
 
 
+def test_bulk_candidates_selection(client, account, db):
+    run = _run(db)
+    a = _cand(db, run, "a@acme.test", selected=True, name="A")
+    b = _cand(db, run, "b@acme.test", selected=True, name="B")
+    c = _cand(db, run, "c@acme.test", selected=False, name="C")
+    clear = client.post(
+        f"{BASE}/runs/{run.id}/candidates/selection",
+        headers=account,
+        json={"selected": False, "candidate_ids": [a.id, b.id, c.id]},
+    )
+    assert clear.status_code == 200, clear.text
+    assert clear.json()["updated"] == 2
+    assert clear.json()["selected"] is False
+    db.expire_all()
+    assert not db.get(LeadCandidate, a.id).selected
+    assert not db.get(LeadCandidate, b.id).selected
+    assert not db.get(LeadCandidate, c.id).selected
+    select_all = client.post(
+        f"{BASE}/runs/{run.id}/candidates/selection",
+        headers=account,
+        json={"selected": True, "candidate_ids": [a.id, b.id, c.id]},
+    )
+    assert select_all.status_code == 200
+    assert select_all.json()["updated"] == 3
+    missing = client.post(
+        f"{BASE}/runs/{run.id}/candidates/selection",
+        headers=account,
+        json={"selected": True, "candidate_ids": [a.id, "00000000-0000-0000-0000-000000000000"]},
+    )
+    assert missing.status_code == 404
+
+
 def test_patch_candidate_wrong_run_404(client, account, db):
     run, other = _run(db), _run(db)
     cand = _cand(db, other, "a@acme.test", name="A")
@@ -301,6 +333,47 @@ def test_enqueue_or_run_uses_celery_and_never_inlines_with_broker(db, account, m
     monkeypatch.setattr(get_settings(), "redis_url", "")
     service.enqueue_or_run("r3")
     assert inline == ["r3"]
+
+
+def test_schedule_next_batch_continues_until_target(db, account, monkeypatch):
+    from app.lead_finder import service
+
+    run = _run(db, status="ready", target=50)
+    run.progress = {"batch_generation": 1, "auto_batches": 0}
+    for i in range(20):
+        _cand(db, run, f"n{i}@acme.test", name="N")
+    db.commit()
+    calls = []
+    monkeypatch.setattr(
+        "app.lead_finder.service.enqueue_or_run",
+        lambda run_id, batch_limit=None, generation=None: calls.append((run_id, batch_limit, generation)),
+    )
+    service.schedule_next_batch_if_needed(run.id, kept_before=0, generation=1)
+    db.refresh(run)
+    assert run.status == "queued"
+    assert calls == [(run.id, 20, 2)]  # remaining 30, chunked to first_batch 20
+    assert run.progress["auto_batches"] == 1
+    assert "Continuing toward 50" in run.progress["message"]
+
+
+def test_schedule_next_batch_stops_when_stalled(db, account, monkeypatch):
+    from app.lead_finder import service
+
+    run = _run(db, status="ready", target=50)
+    run.progress = {"batch_generation": 1}
+    for i in range(12):
+        _cand(db, run, f"s{i}@acme.test", name="S")
+    db.commit()
+    calls = []
+    monkeypatch.setattr(
+        "app.lead_finder.service.enqueue_or_run",
+        lambda run_id, batch_limit=None, generation=None: calls.append(run_id),
+    )
+    service.schedule_next_batch_if_needed(run.id, kept_before=12, generation=1)
+    db.refresh(run)
+    assert calls == []
+    assert run.status == "ready"
+    assert "no more new leads" in run.progress["message"]
 
 
 def test_create_run_with_broker_down_returns_failed(client, account, monkeypatch):

@@ -16,6 +16,7 @@ import {
   progressPercent,
   saveGroup,
   saveResultSummary,
+  setCandidatesSelected,
   startRun,
 } from '../services/leadFinder';
 import { BusyButton, Empty, Field, PageHeader, QueryState, Status } from '../components/Common';
@@ -27,7 +28,7 @@ const POLL_MS = 2000;
 
 const StatusBadge = ({ status }) => <Status value={status} />;
 
-function CandidateRow({ runId, candidate, onChanged }) {
+function CandidateRow({ runId, candidate, onChanged, onSelect }) {
   const [draft, setDraft] = useState({ name: candidate.name, company: candidate.company, position: candidate.position });
   const [saving, setSaving] = useState(false);
   const dirty = useRef(new Set());
@@ -45,12 +46,12 @@ function CandidateRow({ runId, candidate, onChanged }) {
     setSaving(true);
     try {
       await patchCandidate(runId, candidate.id, changes);
+      onChanged();
     } catch (error) {
       toast.error(errorText(error));
       setDraft({ name: candidate.name, company: candidate.company, position: candidate.position });
     } finally {
       setSaving(false);
-      onChanged();
     }
   };
   const commit = (field) => {
@@ -78,8 +79,7 @@ function CandidateRow({ runId, candidate, onChanged }) {
           type="checkbox"
           aria-label={`Select ${candidate.email}`}
           checked={!!candidate.selected}
-          disabled={saving}
-          onChange={(event) => save({ selected: event.target.checked })}
+          onChange={(event) => onSelect(candidate.id, event.target.checked)}
         />
       </td>
       <td>{cell('name', 'Name')}</td>
@@ -122,9 +122,78 @@ export default function LeadFinder() {
 
   const runData = run.data;
   const active = isRunActive(runData);
-  const items = candidates.data?.items || [];
+  // Pending selection overrides survive background polls until the PATCH lands.
+  const selectionOverrides = useRef(new Map());
+  const [, setSelectionTick] = useState(0);
+  const rawItems = candidates.data?.items || [];
+  const items = selectionOverrides.current.size
+    ? rawItems.map((candidate) =>
+        selectionOverrides.current.has(candidate.id)
+          ? { ...candidate, selected: selectionOverrides.current.get(candidate.id) }
+          : candidate
+      )
+    : rawItems;
   const selectedCount = items.filter((candidate) => candidate.selected).length;
+  const allSelected = items.length > 0 && selectedCount === items.length;
+  const someSelected = selectedCount > 0 && !allSelected;
   const refreshRunViews = () => client.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === 'string' && query.queryKey[0].startsWith(RUNS_KEY) });
+  const selectAllRef = useRef(null);
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someSelected;
+  }, [someSelected, allSelected, items.length]);
+
+  /** Instant UI; PATCH in background. No await / full refetch on click. */
+  const setSelection = (ids, selected) => {
+    if (!activeId || !ids.length) return;
+    const idSet = new Set(ids);
+    const previous = new Map(
+      items.filter((candidate) => idSet.has(candidate.id)).map((candidate) => [candidate.id, !!candidate.selected])
+    );
+    const targets = items.filter(
+      (candidate) => idSet.has(candidate.id) && !!candidate.selected !== !!selected
+    );
+    if (!targets.length) return;
+
+    for (const id of ids) selectionOverrides.current.set(id, selected);
+    client.setQueriesData({ queryKey: [candidatesUrl] }, (current) => {
+      if (!current?.items) return current;
+      return {
+        ...current,
+        items: current.items.map((candidate) =>
+          idSet.has(candidate.id) ? { ...candidate, selected } : candidate
+        ),
+      };
+    });
+    setSelectionTick((tick) => tick + 1);
+
+    void (async () => {
+      try {
+        if (targets.length === 1) await patchCandidate(activeId, targets[0].id, { selected });
+        else await setCandidatesSelected(activeId, targets, selected);
+        for (const id of ids) {
+          if (selectionOverrides.current.get(id) === selected) selectionOverrides.current.delete(id);
+        }
+        setSelectionTick((tick) => tick + 1);
+      } catch (error) {
+        for (const [id, wasSelected] of previous) selectionOverrides.current.set(id, wasSelected);
+        client.setQueriesData({ queryKey: [candidatesUrl] }, (current) => {
+          if (!current?.items) return current;
+          return {
+            ...current,
+            items: current.items.map((candidate) =>
+              previous.has(candidate.id) ? { ...candidate, selected: previous.get(candidate.id) } : candidate
+            ),
+          };
+        });
+        setSelectionTick((tick) => tick + 1);
+        toast.error(errorText(error));
+      }
+    })();
+  };
+
+  const toggleSelectAll = (selected) => {
+    setSelection(items.map((candidate) => candidate.id), selected);
+  };
 
   // When a run finishes, pull in the final candidate list once.
   const [wasActive, setWasActive] = useState(false);
@@ -175,7 +244,7 @@ export default function LeadFinder() {
           <div className="lead-start-grid">
             <Field label="Who are you looking for?" required>
               <textarea
-                rows={3}
+                rows={5}
                 maxLength={4000}
                 value={instruction}
                 onChange={(event) => setInstruction(event.target.value)}
@@ -246,7 +315,19 @@ export default function LeadFinder() {
                     )}
                     {runData.progress?.warning && !active && <p className="lead-warning">{runData.progress.warning}</p>}
                     <div className="lead-toolbar">
-                      <span className="selection-indicator">{selectedCount} of {items.length} selected</span>
+                      <div className="lead-selection-tools">
+                        <span className="selection-indicator">{selectedCount} of {items.length} selected</span>
+                        {items.length > 0 && (
+                          <>
+                            <Button type="button" variant="secondary" size="sm" disabled={allSelected} onClick={() => toggleSelectAll(true)}>
+                              Select all
+                            </Button>
+                            <Button type="button" variant="secondary" size="sm" disabled={selectedCount === 0} onClick={() => toggleSelectAll(false)}>
+                              Clear
+                            </Button>
+                          </>
+                        )}
+                      </div>
                       <div className="lead-toolbar-actions">
                         {active && (
                           <BusyButton variant="secondary" size="sm" busy={cancel.isPending} onClick={() => cancel.mutate()}>
@@ -277,11 +358,33 @@ export default function LeadFinder() {
                         <div className="table-scroll">
                           <table className="lead-table">
                             <thead>
-                              <tr><th aria-label="Selected" /><th>Name</th><th>Company</th><th>Position</th><th>Email</th><th>Source</th></tr>
+                              <tr>
+                                <th className="table-check">
+                                  <input
+                                    ref={selectAllRef}
+                                    type="checkbox"
+                                    aria-label="Select all leads"
+                                    checked={allSelected}
+                                    disabled={!items.length}
+                                    onChange={(event) => toggleSelectAll(event.target.checked)}
+                                  />
+                                </th>
+                                <th>Name</th>
+                                <th>Company</th>
+                                <th>Position</th>
+                                <th>Email</th>
+                                <th>Source</th>
+                              </tr>
                             </thead>
                             <tbody>
                               {items.map((candidate) => (
-                                <CandidateRow key={candidate.id} runId={activeId} candidate={candidate} onChanged={refreshRunViews} />
+                                <CandidateRow
+                                  key={candidate.id}
+                                  runId={activeId}
+                                  candidate={candidate}
+                                  onChanged={refreshRunViews}
+                                  onSelect={(id, selected) => setSelection([id], selected)}
+                                />
                               ))}
                             </tbody>
                           </table>

@@ -48,5 +48,18 @@ export const continueRun = async (id) => (await api.post(`/lead-finder/runs/${id
 export const cancelRun = async (id) => (await api.post(`/lead-finder/runs/${id}/cancel`)).data;
 export const patchCandidate = async (runId, candidateId, changes) =>
   (await api.patch(`/lead-finder/runs/${runId}/candidates/${candidateId}`, changes)).data;
+
+/** Toggle selection for many candidates in one request (Select all / Clear). */
+export const setCandidatesSelected = async (runId, candidates, selected) => {
+  const targets = (candidates || []).filter((candidate) => !!candidate.selected !== !!selected);
+  if (!targets.length) return { updated: 0, selected };
+  return (
+    await api.post(`/lead-finder/runs/${runId}/candidates/selection`, {
+      selected,
+      candidate_ids: targets.map((candidate) => candidate.id),
+    })
+  ).data;
+};
+
 export const saveGroup = async (runId, group_name) =>
   (await api.post(`/lead-finder/runs/${runId}/save-group`, { group_name })).data;

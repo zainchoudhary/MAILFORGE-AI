@@ -238,16 +238,24 @@ def _upsert(
 ) -> tuple[bool, bool]:
     """Insert or improve a candidate. Returns ``(inserted, suppressed)``.
 
+    Emails already in the org's active recipients are skipped entirely (never shown again).
+    Suppressed emails are also skipped. Within a run, the same email is upserted once.
     New emails are only inserted while ``allow_insert`` (the batch goal is not yet met).
-    ``selected`` is only set on insert; updates preserve it (user may have patched it) unless
-    the email is suppressed, which forces it to False. Fields listed in
-    ``signals["user_edited"]`` (set by PATCH) are never overwritten by a re-sighting.
+    ``selected`` is only set on insert; updates preserve it unless suppressed.
+    Fields listed in ``signals["user_edited"]`` are never overwritten by a re-sighting.
     """
     email = normalize_email(draft.email)
-    existing = db.scalar(
-        select(LeadCandidate).where(LeadCandidate.run_id == run.id, LeadCandidate.email == email)
+    already_recipient = (
+        db.scalar(
+            select(Recipient.id).where(
+                Recipient.organization_id == run.organization_id,
+                Recipient.email == email,
+                Recipient.deleted.is_(False),
+            )
+        )
+        is not None
     )
-    if existing is None and not allow_insert:
+    if already_recipient:
         return False, False
     suppressed = (
         db.scalar(
@@ -257,17 +265,14 @@ def _upsert(
         )
         is not None
     )
-    recipient_id = db.scalar(
-        select(Recipient.id).where(
-            Recipient.organization_id == run.organization_id,
-            Recipient.email == email,
-            Recipient.deleted.is_(False),
-        )
-    )
-    signals = dict(draft.signals)
     if suppressed:
-        signals["suppressed"] = True
-    selected = False if suppressed else draft.selected
+        return False, True
+    existing = db.scalar(
+        select(LeadCandidate).where(LeadCandidate.run_id == run.id, LeadCandidate.email == email)
+    )
+    if existing is None and not allow_insert:
+        return False, False
+    signals = dict(draft.signals)
     if existing is None:
         db.add(
             LeadCandidate(
@@ -276,13 +281,13 @@ def _upsert(
                 email=email,
                 score=draft.score,
                 signals=signals,
-                selected=selected,
-                existing_recipient_id=recipient_id,
+                selected=draft.selected,
+                existing_recipient_id=None,
                 **{field: getattr(draft, field) for field in _FIELDS},
             )
         )
         db.flush()
-        return True, suppressed
+        return True, False
     user_edited = list((existing.signals or {}).get("user_edited") or [])
     if draft.score > existing.score:
         for field in _FIELDS:
@@ -290,9 +295,5 @@ def _upsert(
                 setattr(existing, field, getattr(draft, field))
         existing.score = draft.score
         existing.signals = {**signals, "user_edited": user_edited} if user_edited else signals
-    if suppressed:
-        existing.selected = False
-        existing.signals = {**(existing.signals or {}), "suppressed": True}
-    existing.existing_recipient_id = recipient_id
     db.flush()
-    return False, suppressed
+    return False, False

@@ -3266,7 +3266,13 @@ td select:not([multiple]) {
 /* Lead Finder */
 .lead-start { margin-bottom: 20px; }
 .lead-start-grid { display: grid; grid-template-columns: minmax(0, 1fr) 140px; gap: 14px; align-items: start; }
-.lead-start-grid textarea { min-height: 84px; resize: vertical; }
+.lead-start-grid textarea {
+  height: 132px;
+  min-height: 132px;
+  max-height: 132px;
+  resize: none;
+  overflow-y: auto;
+}
 .lead-start-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 12px; }
 .lead-start-actions small { color: var(--muted); font-size: 11px; }
 .lead-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 20px; align-items: start; }
@@ -3274,6 +3280,7 @@ td select:not([multiple]) {
 .lead-examples { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin-top: 14px; }
 .lead-run-title { font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
 .lead-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 16px 0 12px; }
+.lead-selection-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .lead-toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .lead-error { margin-top: 14px; }
 .lead-warning { margin-top: 10px; color: #f0c674; font-size: 11px; }

@@ -345,6 +345,11 @@ def extract_document(extraction_id):
 @celery.task(soft_time_limit=540, time_limit=600)
 def run_lead_finder_batch(run_id, batch_limit=20, generation=None):
     from app.lead_finder.pipeline import run_lead_batch
+    from app.lead_finder.service import candidate_count, schedule_next_batch_if_needed
 
     with SessionLocal() as db:
-        return run_lead_batch(db, run_id, batch_limit=batch_limit, generation=generation)
+        kept_before = candidate_count(db, run_id)
+        summary = run_lead_batch(db, run_id, batch_limit=batch_limit, generation=generation)
+    # Keep searching in further Celery jobs until target_count or search stalls.
+    schedule_next_batch_if_needed(run_id, kept_before, generation)
+    return summary
