@@ -4,6 +4,7 @@ import { Sparkles } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
 import { session } from './services/api';
 import Workspace from './layouts/Workspace';
+import Landing from './pages/Landing';
 import Login from './pages/Login';
 import { ForgotPassword, ResetPassword } from './pages/PasswordReset';
 // A deployed Vite build can briefly serve an old HTML shell after a new route
@@ -27,7 +28,6 @@ function lazyPage(loader, key) {
     }
   });
 }
-const Landing = lazy(() => import('./pages/Landing'));
 const Overview = lazy(() => import('./pages/Overview'));
 const Compose = lazy(() => import('./pages/Compose'));
 const Campaigns = lazyPage(() => import('./pages/Campaigns'), 'campaigns');
@@ -55,6 +55,7 @@ function Guard() {
   return authenticated ? <Workspace /> : <Navigate to="/login" replace />;
 }
 function WorkspaceBoot() {
+  if (typeof window !== 'undefined' && window.location.pathname === '/') return null;
   return <div className="dashboard-boot" role="status" aria-live="polite">
     <div className="dashboard-boot-mark"><Sparkles size={25} /><i /><i /><i /></div>
     <strong>Building your command center</strong>
