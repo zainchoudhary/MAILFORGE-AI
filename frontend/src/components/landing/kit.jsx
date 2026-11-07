@@ -168,7 +168,6 @@ export function GlowLink({ to, children, className = '' }) {
 
 export function useLandingSeo() {
   useEffect(() => {
-    const previousTitle = document.title;
     document.title = TITLE;
 
     const description = document.querySelector('meta[name="description"]');
@@ -179,7 +178,6 @@ export function useLandingSeo() {
     const previousTheme = theme?.getAttribute('content') ?? '';
     theme?.setAttribute('content', '#090e1a');
 
-    const created = [];
     const tags = [
       ['property', 'og:title', TITLE],
       ['property', 'og:description', DESCRIPTION],
@@ -192,7 +190,6 @@ export function useLandingSeo() {
         node = document.createElement('meta');
         node.setAttribute(attr, key);
         document.head.appendChild(node);
-        created.push(node);
         wasCreated = true;
       }
       const previous = node.getAttribute('content');
@@ -201,7 +198,7 @@ export function useLandingSeo() {
     });
 
     return () => {
-      document.title = previousTitle;
+      // Leave document.title for the next route's title hook.
       description?.setAttribute('content', previousDescription);
       if (theme) theme.setAttribute('content', previousTheme);
       tags.forEach(({ node, previous, wasCreated }) => {

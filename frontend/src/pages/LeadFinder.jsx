@@ -236,7 +236,7 @@ export default function LeadFinder() {
     <>
       <PageHeader
         eyebrow="AUDIENCE WORKSPACE"
-        title="Lead Finder"
+        title="Google Search"
         description="Describe the recruiters you want to reach. We search public pages for contact emails, then you review and edit every lead before saving."
       />
       <section className="panel lead-start">

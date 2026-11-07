@@ -345,7 +345,7 @@ export function Integrations() {
             <section className="panel integration-card">
               <Search size={25} />
               <small>OPTIONAL</small>
-              <h3>Lead Finder search</h3>
+              <h3>Outreach Intelligence</h3>
               <p>
                 Set LEAD_SEARCH_PROVIDER to serper with SERPER_API_KEY, or to google_cse with
                 GOOGLE_CSE_API_KEY and GOOGLE_CSE_CX. LEAD_FINDER_MAX_PER_RUN and
@@ -353,8 +353,8 @@ export function Integrations() {
                 group.
               </p>
               <Button variant="secondary" asChild>
-                <Link to="/lead-finder">
-                  Open Lead Finder <ArrowUpRight size={15} />
+                <Link to="/lead-finder/gmail">
+                  Open Google Search <ArrowUpRight size={15} />
                 </Link>
               </Button>
             </section>

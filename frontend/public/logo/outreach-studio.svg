@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" role="img" aria-label="Outreach Studio">
+  <defs>
+    <linearGradient id="os-ring" x1="48" y1="36" x2="208" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4CC9F0"/>
+      <stop offset=".42" stop-color="#5B6CFF"/>
+      <stop offset="1" stop-color="#B24BF3"/>
+    </linearGradient>
+    <linearGradient id="os-trail" x1="56" y1="150" x2="150" y2="96" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7DF9FF" stop-opacity="0"/>
+      <stop offset=".35" stop-color="#67E8F9"/>
+      <stop offset="1" stop-color="#A5F3FC"/>
+    </linearGradient>
+    <linearGradient id="os-plane" x1="118" y1="96" x2="176" y2="156" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#D7E7FF"/>
+    </linearGradient>
+    <filter id="os-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3.2" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="os-soft" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="1.2" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- App tile -->
+  <rect x="10" y="10" width="236" height="236" rx="58" fill="#07111F"/>
+  <rect x="10" y="10" width="236" height="236" rx="58" fill="url(#os-ring)" opacity=".08"/>
+  <rect x="14" y="14" width="228" height="228" rx="54" stroke="#1B2A44" stroke-width="2" fill="none"/>
+
+  <!-- Soft glow behind mark -->
+  <circle cx="128" cy="132" r="78" fill="#3B82F6" opacity=".12" filter="url(#os-glow)"/>
+
+  <!-- Orbital ring -->
+  <circle cx="126" cy="134" r="62" stroke="url(#os-ring)" stroke-width="28" filter="url(#os-soft)"/>
+
+  <!-- Motion trail -->
+  <path d="M58 156c28-42 62-58 102-48" stroke="url(#os-trail)" stroke-width="10" stroke-linecap="round" opacity=".95"/>
+  <path d="M52 168c22-28 42-40 66-42" stroke="#67E8F9" stroke-width="5" stroke-linecap="round" opacity=".45"/>
+
+  <!-- Paper plane -->
+  <path d="M96 148 178 88l-34 78-18-22-30 14Z" fill="url(#os-plane)"/>
+  <path d="M122 136 178 88l-34 78Z" fill="#9FB7E8" opacity=".85"/>
+  <path d="M122 136 144 166" stroke="#7F96C4" stroke-width="4" stroke-linecap="round"/>
+  <path d="M96 148 122 136" stroke="#E8F0FF" stroke-width="2.5" stroke-linecap="round" opacity=".7"/>
+
+  <!-- Sparkle -->
+  <g filter="url(#os-glow)" transform="translate(186 54)">
+    <path d="M0-14 4-4 14 0 4 4 0 14-4 4-14 0-4-4Z" fill="#67E8F9"/>
+  </g>
+</svg>

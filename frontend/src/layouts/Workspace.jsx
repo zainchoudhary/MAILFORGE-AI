@@ -24,11 +24,13 @@ import {
   X,
   PanelLeftClose,
   PanelLeftOpen,
+  Linkedin,
   Zap,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { useApi } from '../hooks/useApi';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { api, session } from '../services/api';
 import { useQueryClient } from '@tanstack/react-query';
 import { ConfirmDialog } from '../components/Common';
@@ -40,7 +42,10 @@ const groups = [
     [
       ['Overview', '/overview', LayoutDashboard],
       ['AI Agent Studio', '/studio', Bot],
-      ['Lead Finder', '/lead-finder', Search],
+      ['Outreach Intelligence', '/lead-finder', Search, [
+        ['Google Search', '/lead-finder/gmail', Mail],
+        ['LinkedIn Search', '/lead-finder/linkedin', Linkedin],
+      ]],
       ['Recipients', '/recipients', Users],
       ['Recipient groups', '/recipient-groups', UserRoundPlus],
       ['Campaign', '/campaigns', Mail],
@@ -70,11 +75,14 @@ export default function Workspace() {
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('mf_sidebar_collapsed') === 'true');
   const [logoutOpen, setLogoutOpen] = useState(false);
+  const [leadFinderOpen, setLeadFinderOpen] = useState(false);
   const { logout } = useAuth();
   const location = useLocation();
   const client = useQueryClient();
   const me = useApi('/auth/me');
   const settings = useApi('/settings');
+  useDocumentTitle();
+
   useEffect(() => {
     const preferences = settings.data?.preferences;
     if (preferences) {
@@ -147,20 +155,68 @@ export default function Workspace() {
           {groups.map(([label, links]) => (
             <div className="nav-group" key={label}>
               <h3>{label}</h3>
-              {links.map(([title, url, Icon]) => (
-                <NavLink
-                  key={url}
-                  title={collapsed ? title : undefined}
-                  aria-label={title}
-                  to={url}
-                  end={url === '/overview'}
-                  className={({ isActive }) => `nav-link ${isActive || (url === '/campaigns' && location.pathname === '/compose') ? 'active' : ''}`}
-                >
-                  <Icon size={17} />
-                  <span>{title}</span>
-                  {url === '/studio' && <span className="tiny-tag">AI</span>}
-                </NavLink>
-              ))}
+              {links.map(([title, url, Icon, children]) => {
+                if (children?.length) {
+                  const sectionActive = location.pathname.startsWith(url);
+                  const expanded = collapsed || leadFinderOpen;
+                  return (
+                    <div className={`nav-section ${sectionActive ? 'is-active' : ''}`} key={url}>
+                      <button
+                        type="button"
+                        className="nav-link nav-section-toggle"
+                        title={collapsed ? title : undefined}
+                        aria-label={title}
+                        aria-expanded={expanded}
+                        onClick={() => {
+                          if (collapsed) {
+                            setCollapsed(false);
+                            localStorage.setItem('mf_sidebar_collapsed', 'false');
+                            setLeadFinderOpen(true);
+                            return;
+                          }
+                          setLeadFinderOpen((value) => !value);
+                        }}
+                      >
+                        <Icon size={17} />
+                        <span>{title}</span>
+                        {!collapsed ? <ChevronDown size={12} className={`nav-chevron ${expanded ? 'is-open' : ''}`} /> : null}
+                      </button>
+                      {expanded ? (
+                        <div className="nav-sub">
+                          {children.map(([childTitle, childUrl, ChildIcon]) => (
+                            <NavLink
+                              key={childUrl}
+                              title={collapsed ? childTitle : undefined}
+                              aria-label={childTitle}
+                              to={childUrl}
+                              className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                              onClick={() => setOpen(false)}
+                            >
+                              <ChildIcon size={16} />
+                              <span>{childTitle}</span>
+                            </NavLink>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                }
+                return (
+                  <NavLink
+                    key={url}
+                    title={collapsed ? title : undefined}
+                    aria-label={title}
+                    to={url}
+                    end={url === '/overview'}
+                    className={({ isActive }) => `nav-link ${isActive || (url === '/campaigns' && location.pathname === '/compose') ? 'active' : ''}`}
+                    onClick={() => setOpen(false)}
+                  >
+                    <Icon size={17} />
+                    <span>{title}</span>
+                    {url === '/studio' && <span className="tiny-tag">AI</span>}
+                  </NavLink>
+                );
+              })}
             </div>
           ))}
         </nav>

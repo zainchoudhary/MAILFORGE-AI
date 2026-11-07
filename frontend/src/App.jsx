@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { lazy, Suspense } from 'react';
 import { Sparkles } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
+import { useDocumentTitle } from './hooks/useDocumentTitle';
 import { session } from './services/api';
 import Workspace from './layouts/Workspace';
 import Landing from './pages/Landing';
@@ -45,6 +46,9 @@ const EmailDetail = lazy(() =>
 const Templates = lazy(() => import('./pages/Templates'));
 const Studio = lazy(() => import('./pages/Studio'));
 const LeadFinder = lazy(() => import('./pages/LeadFinder'));
+const LinkedInFinder = lazy(() =>
+  import('./pages/LinkedInFinder').then((module) => ({ default: module.default })),
+);
 const Analytics = lazy(() => import('./pages/Analytics'));
 import { SMTP, Settings, Integrations, Audit, Automation } from './pages/Configuration';
 function Guard() {
@@ -63,17 +67,21 @@ function WorkspaceBoot() {
   </div>;
 }
 export default function App() {
+  useDocumentTitle();
   return (
     <Suspense fallback={<WorkspaceBoot />}>
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Login />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route element={<Guard />}>
           <Route path="overview" element={<Overview />} />
           <Route path="studio" element={<Studio />} />
-          <Route path="lead-finder" element={<LeadFinder />} />
+          <Route path="lead-finder" element={<Navigate to="/lead-finder/gmail" replace />} />
+          <Route path="lead-finder/gmail" element={<LeadFinder />} />
+          <Route path="lead-finder/linkedin" element={<LinkedInFinder />} />
           <Route path="compose" element={<Compose />} />
           <Route path="documents" element={<Documents />} />
           <Route path="campaigns" element={<Campaigns />} />

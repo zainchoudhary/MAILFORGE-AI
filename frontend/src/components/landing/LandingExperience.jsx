@@ -33,7 +33,7 @@ export default function LandingExperience({ authenticated }) {
     });
   };
 
-  const startTo = authenticated ? '/overview' : '/login?register=1';
+  const startTo = authenticated ? '/overview' : '/register';
   const loginTo = authenticated ? '/overview' : '/login';
   const cta = authenticated ? 'Open studio' : 'Get started';
   const loginLabel = authenticated ? 'Workspace' : 'Login';

@@ -123,7 +123,16 @@ html.lenis body {
 .os-land a { color: inherit; }
 
 .os-land .brand { color: var(--os-ink); letter-spacing: -0.03em; }
-.os-land .brand-name b { color: #c7d2fe; }
+.os-land .brand-name b {
+  background: linear-gradient(100deg, #67e8f9 0%, #818cf8 50%, #c084fc 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.os-land .outreach-mark {
+  width: 36px;
+  height: 36px;
+}
 
 .os-shell {
   width: min(var(--os-max), calc(100% - var(--os-gutter) * 2));
@@ -1565,7 +1574,12 @@ html.lenis body {
 .landing.os-land[data-theme='light'] .os-drawer a { color: #0f172a; }
 .landing.os-land[data-theme='light'] .os-drawer a:hover { background: #f1f5f9; }
 .landing.os-land[data-theme='light'] .brand { color: #0f172a; }
-.landing.os-land[data-theme='light'] .brand-name b { color: #4f46e5; }
+.landing.os-land[data-theme='light'] .brand-name b {
+  background: linear-gradient(100deg, #0ea5e9 0%, #4f46e5 52%, #9333ea 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
 
 .landing.os-land[data-theme='light'] .os-btn-primary {
   color: #ffffff;
