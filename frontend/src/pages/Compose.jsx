@@ -12,6 +12,7 @@ import { PageHeader, Field, BusyButton, ConfirmDialog, Empty, Uploader, sizeLabe
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 import { RichEditor, EmailPreview } from '../components/RichEditor';
+import { FilePreview } from '../components/FilePreview';
 import { getGroupPreviewMembers } from '../services/recipientGroups';
 const schema = z.object({
   name: z.string().min(1, 'Campaign name is required'),
@@ -76,6 +77,7 @@ export default function Compose() {
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
   const [preview, setPreview] = useState(false);
+  const [previewFile, setPreviewFile] = useState(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [groupsOpen, setGroupsOpen] = useState(false);
@@ -443,7 +445,7 @@ export default function Compose() {
                 <div>
                   {selectedGroups.map((group) => (
                     <span className="compose-selected-group-chip" key={group.id}>
-                      <button type="button" onClick={() => setPreviewGroup(group)} aria-label={`Preview ${group.name}`}>
+                      <button type="button" title={group.name} onClick={() => setPreviewGroup(group)} aria-label={`Preview ${group.name}`}>
                         {group.name}
                       </button>
                       <button
@@ -515,15 +517,6 @@ export default function Compose() {
                 onChange={(value) => form.setValue('body', value, { shouldValidate: true })}
               />
             </Field>
-            <div className="token-row">
-              <span>Personalize with</span>
-              {['name', 'email', 'company', 'position'].map((t) => (
-                <button
-                  key={t}
-                  onClick={() => form.setValue('body', values.body + `<p>{{${t}}}</p>`)}
-                >{`{{${t}}}`}</button>
-              ))}
-            </div>
           </ComposeSection>
           <ComposeSection
             title="Attachments"
@@ -553,9 +546,14 @@ export default function Compose() {
               <div className="file-row" key={a.id}>
                 <FileText size={17} />
                 <span>
-                  {a.filename}
+                  <button type="button" className="table-title" onClick={() => setPreviewFile(a)}>
+                    {a.filename}
+                  </button>
                   <small>{sizeLabel(a.size)}</small>
                 </span>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setPreviewFile(a)}>
+                  <Eye size={14} /> Preview
+                </Button>
                 <button
                   aria-label={`Remove ${a.filename}`}
                   onClick={() => setAttachments(attachments.filter((x) => x.id !== a.id))}
@@ -649,6 +647,7 @@ export default function Compose() {
         processingLabel="Preparing delivery…"
         onConfirm={() => send.mutateAsync(form.getValues())}
       />
+      <FilePreview document={previewFile} onClose={() => setPreviewFile(null)} />
     </>
   );
 }

@@ -642,7 +642,9 @@ def notifications(user=Depends(current_user), db=Depends(get_db)):
 def preview_document(identifier: str, user=Depends(current_user), db=Depends(get_db)):
     from fastapi.responses import Response
 
-    from app.document_processing.parser import ALLOWED, read_document
+    import json
+
+    from app.document_processing.parser import ALLOWED, preview_spreadsheet, read_document
 
     doc = owned(db, Document, identifier, user.organization_id)
     path = Path(get_settings().storage_path) / doc.storage_key
@@ -652,16 +654,29 @@ def preview_document(identifier: str, user=Depends(current_user), db=Depends(get
     if extension == ".pdf":
         import fitz
 
+        # Serve the original PDF so every page is visible in the browser viewer
+        # (first-page PNG previews hid page 2+ and looked incomplete).
         with fitz.open(path) as pdf:
             if not len(pdf):
                 raise HTTPException(422, "PDF has no pages")
-            page = pdf[0]
-            scale = min(1.5, 1400 / max(page.rect.width, page.rect.height))
-            return Response(
-                page.get_pixmap(matrix=fitz.Matrix(scale, scale)).tobytes("png"),
-                media_type="image/png",
-                headers=preview_headers,
-            )
+        return FileResponse(
+            path,
+            media_type="application/pdf",
+            headers={
+                **preview_headers,
+                "Content-Disposition": f'inline; filename="{doc.filename}"',
+            },
+        )
+    if extension in (".xlsx", ".xls", ".csv"):
+        try:
+            payload = preview_spreadsheet(path, extension)
+        except Exception as exc:
+            raise HTTPException(422, f"Unable to build a spreadsheet preview: {exc}") from exc
+        return Response(
+            json.dumps(payload, ensure_ascii=False),
+            media_type="application/json; charset=utf-8",
+            headers=preview_headers,
+        )
     if extension in (".png", ".jpg", ".jpeg"):
         return FileResponse(path, media_type=doc.mime_type, headers=preview_headers)
     if extension in ALLOWED:

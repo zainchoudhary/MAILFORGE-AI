@@ -42,6 +42,45 @@ def check_archive(path):
                 raise ValueError("Archive exceeds safe decompression limits")
 
 
+PREVIEW_SPREADSHEET_ROWS = 300
+
+
+def preview_spreadsheet(path: Path, extension: str, max_rows: int = PREVIEW_SPREADSHEET_ROWS) -> dict:
+    """Build a table-shaped preview for Excel/CSV (headers + row grid per sheet)."""
+    import pandas as pd
+
+    check_archive(path)
+    if extension == ".csv":
+        frame = pd.read_csv(path, dtype=str, keep_default_na=False, nrows=max_rows + 1)
+        named = [("Sheet1", frame)]
+    elif extension in (".xlsx", ".xls"):
+        book = pd.read_excel(path, sheet_name=None, dtype=str, keep_default_na=False)
+        named = list(book.items())
+    else:
+        raise ValueError("Not a spreadsheet")
+
+    truncated = False
+    sheets = []
+    for name, frame in named:
+        if len(frame) > max_rows:
+            truncated = True
+            frame = frame.head(max_rows)
+        headers = ["" if c is None else str(c) for c in frame.columns.tolist()]
+        rows = [
+            ["" if value is None else str(value) for value in row]
+            for row in frame.fillna("").astype(str).to_numpy().tolist()
+        ]
+        sheets.append({"name": str(name) or "Sheet", "headers": headers, "rows": rows})
+    if not sheets:
+        raise ValueError("Spreadsheet has no sheets")
+    return {
+        "kind": "spreadsheet",
+        "sheets": sheets,
+        "truncated": truncated,
+        "max_rows": max_rows,
+    }
+
+
 def read_document(path: Path, extension: str):
     check_archive(path)
     if extension == ".pdf":

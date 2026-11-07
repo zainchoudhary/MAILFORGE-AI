@@ -26,6 +26,26 @@
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  scrollbar-width: none;
+}
+
+.landing::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Page scroll lives on html/body — hide the right gutter only on landing. */
+html:has(.landing),
+html:has(.landing) body {
+  scrollbar-width: none;
+}
+
+html:has(.landing)::-webkit-scrollbar,
+html:has(.landing) body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .landing *,

@@ -1,5 +1,5 @@
 import pytest
-from app.document_processing.parser import extract_recipients, read_document
+from app.document_processing.parser import extract_recipients, preview_spreadsheet, read_document
 from app.schemas.inputs import TemplateInput
 
 
@@ -89,6 +89,27 @@ def test_xml_external_entities_rejected(tmp_path):
     path.write_text('<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>')
     with pytest.raises(Exception):
         read_document(path, ".xml")
+
+
+def test_spreadsheet_preview_keeps_headers_and_grid(tmp_path):
+    from openpyxl import Workbook
+
+    path = tmp_path / "team.xlsx"
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "People"
+    sheet.append(["email", "name"])
+    sheet.append(["alex@example.com", "Alex"])
+    sheet.append(["sam@example.com", "Sam"])
+    book.save(path)
+    preview = preview_spreadsheet(path, ".xlsx")
+    assert preview["kind"] == "spreadsheet"
+    assert preview["sheets"][0]["name"] == "People"
+    assert preview["sheets"][0]["headers"] == ["email", "name"]
+    assert preview["sheets"][0]["rows"] == [
+        ["alex@example.com", "Alex"],
+        ["sam@example.com", "Sam"],
+    ]
 
 
 def test_images_are_not_ocr_contact_sources(tmp_path):

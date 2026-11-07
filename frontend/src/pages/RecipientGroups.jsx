@@ -156,7 +156,7 @@ export default function RecipientGroups() {
                   </label>
                 )}
                 <div className="group-card-icon"><UsersRound size={19} /></div>
-                <div className="group-card-content"><h3>{group.name}</h3><p>{group.recipient_count} {group.recipient_count === 1 ? 'recipient' : 'recipients'} saved</p></div>
+                <div className="group-card-content"><h3 title={group.name}>{group.name}</h3><p>{group.recipient_count} {group.recipient_count === 1 ? 'recipient' : 'recipients'} saved</p></div>
                 <div className="group-card-actions">
                   <Button variant="ghost" size="icon" aria-label={`Preview ${group.name}`} onClick={() => setPreviewTarget(group)}><Eye size={15} /></Button>
                   <Button variant="ghost" size="icon" aria-label={`Edit ${group.name}`} onClick={() => openEditor(group)}><Pencil size={15} /></Button>

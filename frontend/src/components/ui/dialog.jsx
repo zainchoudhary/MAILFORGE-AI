@@ -2,7 +2,14 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X, Layers } from 'lucide-react';
 export function Dialog({ open, onOpenChange, title, children, className = '', icon: Icon = Layers, description = 'Review the details below.', busy = false }) {
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
+    <DialogPrimitive.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (busy) return;
+        // Callers may use either (open) => ... or a close-only () => ... handler.
+        onOpenChange(next);
+      }}
+    >
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="modal-overlay" />
         <DialogPrimitive.Content className={`modal ${className}`}>

@@ -33,6 +33,7 @@ import {
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 import { EmailPreview } from '../components/RichEditor';
+import { FilePreview } from '../components/FilePreview';
 
 const ACTIVE_CAMPAIGN_DELETE_BLOCKED = new Set(['processing', 'sending', 'scheduled']);
 
@@ -309,6 +310,7 @@ export function CampaignDetail() {
   const query = useApi(`/campaigns/${id}`, { refetchInterval: 2000 });
   const previews = useApi(`/campaigns/${id}/preview`);
   const [preview, setPreview] = useState(null);
+  const [previewFile, setPreviewFile] = useState(null);
   const [sendOpen, setSendOpen] = useState(false);
   const duplicate = useAction(async () => {
     const { data } = await api.post(`/campaigns/${id}/duplicate`);
@@ -558,7 +560,12 @@ export function CampaignDetail() {
                 {c.attachments.map((a) => (
                   <div className="file-row" key={a.id}>
                     <FileText size={16} />
-                    {a.filename}
+                    <button type="button" className="table-title" onClick={() => setPreviewFile(a)}>
+                      {a.filename}
+                    </button>
+                    <Button size="sm" variant="ghost" onClick={() => setPreviewFile(a)}>
+                      <Eye size={14} /> Preview
+                    </Button>
                     <Button
                       size="sm"
                       variant="ghost"
@@ -614,6 +621,7 @@ export function CampaignDetail() {
               onConfirm={() => send.mutateAsync()}
             />
           )}
+          <FilePreview document={previewFile} onClose={() => setPreviewFile(null)} />
         </>;
       }}
     </QueryState>

@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowUpRight, Download, SlidersHorizontal, ArrowDownUp, Search } from 'lucide-react';
+import { ArrowUpRight, Download, Eye, SlidersHorizontal, ArrowDownUp, Search } from 'lucide-react';
 import { useApi } from '../hooks/useApi';
 import { downloadFile } from '../services/api';
 import { PageHeader, QueryState, Empty, Status, Pagination, dateLabel, PickerDropdown } from '../components/Common';
 import { EmailPreview } from '../components/RichEditor';
+import { FilePreview } from '../components/FilePreview';
 import { Button } from '../components/ui/button';
 export default function Activity() {
   const [params] = useSearchParams();
@@ -125,6 +126,7 @@ export default function Activity() {
 export function EmailDetail() {
   const { id } = useParams();
   const query = useApi(`/emails/${id}`, { refetchInterval: 5000 });
+  const [previewFile, setPreviewFile] = useState(null);
   return (
     <QueryState query={query}>
       {(m) => (
@@ -154,7 +156,13 @@ export function EmailDetail() {
               {m.attachments.length ? (
                 m.attachments.map((a) => (
                   <div className="file-row" key={a.id}>
-                    {a.filename}
+                    <button type="button" className="table-title" onClick={() => setPreviewFile(a)}>
+                      {a.filename}
+                    </button>
+                    <Button size="sm" variant="ghost" onClick={() => setPreviewFile(a)}>
+                      <Eye size={14} />
+                      Preview
+                    </Button>
                     <Button
                       size="sm"
                       variant="ghost"
@@ -203,6 +211,7 @@ export function EmailDetail() {
               </section>
             </aside>
           </div>
+          <FilePreview document={previewFile} onClose={() => setPreviewFile(null)} />
         </>
       )}
     </QueryState>
