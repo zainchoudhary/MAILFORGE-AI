@@ -54,6 +54,35 @@ export function parseJobCard(card, base = "https://www.linkedin.com") {
   };
 }
 
+function parseFromJobLinks(root, base, seen) {
+  const jobs = [];
+  for (const linkEl of root.querySelectorAll(SELECTORS.jobViewLinks)) {
+    const href = linkEl.getAttribute("href") || "";
+    const linkedin_job_id = extractJobId({ href });
+    if (!linkedin_job_id || seen.has(linkedin_job_id)) continue;
+    // Prefer a nearby card-like ancestor for title/company; otherwise use the link text.
+    const card =
+      linkEl.closest(
+        "li, .job-card-container, .jobs-search-results__list-item, .scaffold-layout__list-item"
+      ) || linkEl.parentElement;
+    const title =
+      (card && firstText(card, SELECTORS.title)) || clean(linkEl.textContent) || "";
+    const company = (card && firstText(card, SELECTORS.company)) || "";
+    const location = (card && firstText(card, SELECTORS.location)) || "";
+    if (!title && !company) continue;
+    seen.add(linkedin_job_id);
+    jobs.push({
+      linkedin_job_id,
+      title,
+      company,
+      location,
+      job_url: canonicalJobUrl(linkedin_job_id, href, base),
+      list_payload: { title, company, location, href, source: "jobs_view_link" },
+    });
+  }
+  return jobs;
+}
+
 export function parseVisibleJobs(root, base) {
   const seen = new Set();
   const jobs = [];
@@ -62,6 +91,10 @@ export function parseVisibleJobs(root, base) {
     if (!job || seen.has(job.linkedin_job_id)) continue;
     seen.add(job.linkedin_job_id);
     jobs.push(job);
+  }
+  // LinkedIn often renames list-item classes; fall back to any /jobs/view/ anchors.
+  if (jobs.length === 0) {
+    jobs.push(...parseFromJobLinks(root, base, seen));
   }
   return jobs;
 }

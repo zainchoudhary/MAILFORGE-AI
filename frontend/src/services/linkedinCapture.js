@@ -24,10 +24,10 @@ export const showingLabel = (loaded, total, noun) => {
 };
 
 export const INSTALL_STEPS = [
-  'Install the Outreach Studio LinkedIn Jobs extension in Chrome (chrome://extensions → Load unpacked → select the “extension” folder).',
-  'Set API base to the backend and sign in from the extension side panel with your Outreach Studio account.',
-  'Open a LinkedIn Jobs search and use Capture visible, Deep capture, or Fetch details in the extension side panel. Jobs stream into this page. The “Fetch job details” button here also works: the extension picks it up within about 30 seconds while a LinkedIn Jobs tab is active.',
-  'Emails are extracted only if they appear on the job post. Review leads here, then save them as a recipient group.',
+  'Install the Outreach Studio LinkedIn capture extension in Chrome (chrome://extensions → Load unpacked → select the “extension” folder).',
+  'Sign in from the extension side panel with your Outreach Studio account (API base defaults to localhost:8000; Studio URL to localhost:5173).',
+  'Enter search keywords (e.g. hiring, recruiter), set how many emails you need, then click Collect. The extension opens LinkedIn content search, scrolls, expands posts, and syncs public emails here.',
+  'Review leads here (email, name, company, position), then save them as a recipient group.',
 ];
 
 export const runTitle = (run) => {
@@ -102,5 +102,8 @@ export const fetchJobDetails = async (runId, jobIds) =>
 export const extractRun = async (runId, jobRawIds) =>
   (await api.post(`${BASE}/runs/${runId}/extract`, { job_raw_ids: jobRawIds ?? null })).data;
 export const cancelRun = async (id) => (await api.post(`${BASE}/runs/${id}/cancel`)).data;
+export const deleteRun = async (id) => (await api.delete(`${BASE}/runs/${id}`)).data;
+export const deleteRuns = async (runIds) =>
+  (await api.post(`${BASE}/runs/bulk-delete`, { run_ids: runIds })).data;
 export const saveGroup = async (runId, group_name, candidate_ids) =>
   (await api.post(`${BASE}/runs/${runId}/save-group`, { group_name, ...(candidate_ids ? { candidate_ids } : {}) })).data;

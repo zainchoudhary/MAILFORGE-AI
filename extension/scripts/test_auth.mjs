@@ -132,4 +132,63 @@ function httpErr(status, text = `HTTP ${status}`) {
   assert.deepEqual(store.capture, { runId: "run-stale", sent: 7, total: 12, status: "done" });
 }
 
+// --- Cancelled run: HUNT_BATCH must open a new run instead of dying on 409 ---
+{
+  seedSession({
+    capture: {
+      runId: "run-cancelled",
+      sent: 3,
+      total: 12,
+      status: "hunting",
+      jobIds: ["a", "b", "c"],
+      searchUrl: "https://www.linkedin.com/search/results/content/?keywords=test",
+    },
+  });
+  let created = 0;
+  let batchedTo = [];
+  globalThis.fetch = async (url, opts) => {
+    const u = String(url);
+    if (u.includes("/runs/run-cancelled") && u.endsWith("/jobs/batch") && opts?.method === "POST") {
+      return httpErr(409, JSON.stringify({ detail: "A cancelled run cannot accept more jobs" }));
+    }
+    if (u.includes("/linkedin-capture/runs") && opts?.method === "POST" && !u.includes("/jobs")) {
+      created += 1;
+      return jsonOk({ id: "run-fresh", status: "idle" });
+    }
+    if (u.includes("/runs/run-fresh") && u.endsWith("/jobs/batch")) {
+      batchedTo.push("run-fresh");
+      return jsonOk({ upserted: 1 });
+    }
+    if (u.includes("/runs/run-fresh") && opts?.method !== "POST") {
+      return jsonOk({ id: "run-fresh", status: "idle", candidate_count: 1, progress: {} });
+    }
+    if (u.includes("/runs/run-cancelled") && !u.includes("/jobs")) {
+      return jsonOk({ id: "run-cancelled", status: "cancelled", candidate_count: 0, progress: {} });
+    }
+    return jsonOk({});
+  };
+  // apiFetch parses error text — recreate 409 with detail string via text()
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const res = await origFetch(url, opts);
+    if (!res.ok && res.status === 409) {
+      return {
+        ok: false,
+        status: 409,
+        json: async () => ({ detail: "A cancelled run cannot accept more jobs" }),
+        text: async () => JSON.stringify({ detail: "A cancelled run cannot accept more jobs" }),
+      };
+    }
+    return res;
+  };
+
+  const r = await handlers.HUNT_BATCH({
+    jobs: [{ linkedin_job_id: "p1", title: "Post", detail_payload: { description: "a@b.com" } }],
+  });
+  assert.equal(r.ok, true);
+  assert.equal(created, 1, "must create a replacement run");
+  assert.equal(store.capture.runId, "run-fresh", "capture must point at the new run");
+  assert.ok(batchedTo.includes("run-fresh"), "batch must land on the new run");
+}
+
 console.log("auth tests passed (refresh 5xx keeps session; LOGIN/LOGOUT/apiBase reset capture)");

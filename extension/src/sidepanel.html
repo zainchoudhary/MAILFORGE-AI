@@ -2,53 +2,446 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Outreach Studio Capture</title>
+    <title>Outreach Studio</title>
     <style>
-      body { font: 13px/1.4 system-ui, sans-serif; margin: 12px; color: #172554; }
-      label { display: block; margin-top: 8px; font-weight: 600; }
-      input { width: 100%; box-sizing: border-box; padding: 6px; margin-top: 2px; }
-      button { margin-top: 10px; padding: 7px 12px; cursor: pointer; }
-      .row { display: flex; gap: 8px; }
-      #status { margin-top: 12px; min-height: 1.4em; }
-      #status.error { color: #b91c1c; }
-      #progress { margin-top: 8px; font-weight: 600; }
-      .hidden { display: none; }
-      a { color: #4f46e5; }
+      :root {
+        --bg: #090e1a;
+        --panel: #101827;
+        --ink: #e7edf8;
+        --muted: #8391aa;
+        --line: #222e43;
+        --blue: #7298ff;
+        --cyan: #58d6cc;
+        --danger: #f87171;
+        --ok: #34d399;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 14px;
+        color: var(--ink);
+        font: 13px/1.45 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background:
+          radial-gradient(120% 70% at 0% -10%, rgba(88, 214, 204, 0.16), transparent 50%),
+          radial-gradient(90% 60% at 110% 0%, rgba(114, 152, 255, 0.16), transparent 45%),
+          var(--bg);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .brand img {
+        width: 36px;
+        height: 36px;
+        border-radius: 11px;
+        flex-shrink: 0;
+        box-shadow: 0 0 0 1px rgba(88, 214, 204, 0.2), 0 8px 20px rgba(0, 0, 0, 0.35);
+      }
+      .brand-copy strong {
+        display: block;
+        font-size: 15px;
+        letter-spacing: 0.01em;
+      }
+      .brand-copy strong b { color: var(--cyan); font-weight: 700; }
+      .brand-copy span {
+        display: block;
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 0 0 12px;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 9px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(16, 24, 39, 0.8);
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      .pill .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--cyan);
+        box-shadow: 0 0 8px rgba(88, 214, 204, 0.7);
+      }
+      .pill.blue .dot { background: var(--blue); box-shadow: 0 0 8px rgba(114, 152, 255, 0.7); }
+      .card {
+        position: relative;
+        overflow: hidden;
+        background: linear-gradient(165deg, rgba(22, 36, 56, 0.98), rgba(12, 18, 32, 0.98));
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 14px;
+        margin-bottom: 12px;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+      }
+      .card::before {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(88, 214, 204, 0.45), rgba(114, 152, 255, 0.35), transparent);
+      }
+      .card-kicker {
+        margin: 0 0 4px;
+        color: var(--cyan);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .card-title {
+        margin: 0 0 6px;
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .card-copy {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      label {
+        display: block;
+        margin-top: 10px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      label:first-of-type { margin-top: 0; }
+      .field {
+        margin-top: 6px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: #0b1220;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      .field:focus-within {
+        border-color: rgba(88, 214, 204, 0.55);
+        box-shadow: 0 0 0 3px rgba(88, 214, 204, 0.12);
+      }
+      .field input {
+        width: 100%;
+        border: 0;
+        outline: none;
+        background: transparent;
+        color: var(--ink);
+        font: inherit;
+        padding: 11px 12px;
+      }
+      .primary {
+        width: 100%;
+        margin-top: 14px;
+        padding: 12px 14px;
+        border: 0;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #2dd4bf, #58d6cc 42%, #7298ff);
+        color: #061018;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        box-shadow: 0 8px 22px rgba(45, 212, 191, 0.22);
+      }
+      .primary:hover { filter: brightness(1.05); }
+      .primary:disabled { opacity: 0.5; cursor: not-allowed; filter: none; box-shadow: none; }
+      .ghost {
+        flex: 1;
+        margin-top: 8px;
+        padding: 9px 10px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: rgba(11, 18, 32, 0.55);
+        color: var(--ink);
+        font: inherit;
+        cursor: pointer;
+      }
+      .ghost:hover { border-color: rgba(88, 214, 204, 0.45); color: var(--cyan); }
+      .ghost.tiny {
+        flex: 0;
+        margin: 0;
+        padding: 6px 10px;
+        font-size: 11px;
+      }
+      .row { display: flex; gap: 8px; align-items: center; }
+      .account {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 12px;
+        padding: 10px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: rgba(11, 18, 32, 0.65);
+      }
+      .account-left { display: flex; align-items: center; gap: 9px; min-width: 0; }
+      .avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 10px;
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+        background: linear-gradient(145deg, rgba(88, 214, 204, 0.25), rgba(114, 152, 255, 0.3));
+        color: var(--cyan);
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .account-meta { min-width: 0; }
+      .account-meta strong {
+        display: block;
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .account-meta span {
+        display: block;
+        margin-top: 2px;
+        color: var(--ok);
+        font-size: 10px;
+        font-weight: 650;
+      }
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        margin-bottom: 12px;
+      }
+      .step {
+        padding: 8px 8px 9px;
+        border-radius: 11px;
+        border: 1px solid var(--line);
+        background: rgba(11, 18, 32, 0.55);
+        text-align: center;
+      }
+      .step b {
+        display: block;
+        color: var(--cyan);
+        font-size: 10px;
+        letter-spacing: 0.04em;
+      }
+      .step span {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.3;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .stat {
+        padding: 10px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: rgba(11, 18, 32, 0.7);
+      }
+      .stat small {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .stat strong {
+        display: block;
+        margin-top: 4px;
+        font-size: 18px;
+        letter-spacing: -0.03em;
+        color: var(--ink);
+      }
+      .stat strong em {
+        font-style: normal;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 600;
+      }
+      #progress {
+        margin-top: 12px;
+        padding: 11px 12px;
+        border-radius: 12px;
+        background: rgba(88, 214, 204, 0.08);
+        border: 1px solid rgba(88, 214, 204, 0.18);
+        color: var(--cyan);
+        font-weight: 650;
+        font-size: 12px;
+      }
+      .meter {
+        margin-top: 8px;
+        height: 6px;
+        border-radius: 999px;
+        background: rgba(34, 46, 67, 0.9);
+        overflow: hidden;
+      }
+      .meter > span {
+        display: block;
+        height: 100%;
+        width: 0%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #2dd4bf, #7298ff);
+        transition: width 0.25s ease;
+      }
+      #status {
+        margin-top: 8px;
+        min-height: 1.25em;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      #status.error { color: var(--danger); }
+      .studio {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        width: 100%;
+        margin-top: 10px;
+        padding: 10px 12px;
+        border-radius: 11px;
+        border: 1px solid rgba(114, 152, 255, 0.35);
+        background: rgba(114, 152, 255, 0.1);
+        color: var(--blue);
+        font-weight: 700;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .studio:hover { border-color: var(--blue); color: #a5c0ff; }
+      .studio.hidden, .hidden { display: none !important; }
+      details {
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      summary { cursor: pointer; color: var(--blue); font-weight: 600; }
+      details .field { margin-top: 8px; }
+      details label { margin-top: 10px; }
+      .tips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 10px 0 0;
+      }
+      .tip {
+        padding: 5px 8px;
+        border-radius: 8px;
+        background: rgba(88, 214, 204, 0.08);
+        border: 1px solid rgba(88, 214, 204, 0.14);
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .tip b { color: var(--cyan); font-weight: 700; }
+      .foot-note {
+        margin: 2px 2px 0;
+        color: var(--muted);
+        font-size: 11px;
+        text-align: center;
+      }
     </style>
   </head>
   <body>
-    <h3>Outreach Studio — LinkedIn Jobs</h3>
+    <div class="brand">
+      <img src="assets/outreach-studio.svg" alt="" width="36" height="36" />
+      <div class="brand-copy">
+        <strong>Outreach <b>Studio</b></strong>
+        <span>LinkedIn Capture</span>
+      </div>
+    </div>
+    <div class="pills">
+      <span class="pill"><span class="dot"></span> Public emails only</span>
+      <span class="pill blue"><span class="dot"></span> Syncs to Studio</span>
+    </div>
 
-    <section id="authSection">
-      <label>API base <input id="apiBase" placeholder="http://localhost:8000" /></label>
-      <label>Studio URL <input id="studioUrl" placeholder="http://localhost:8080" /></label>
-      <label>Email <input id="email" type="email" autocomplete="username" /></label>
-      <label>Password <input id="password" type="password" autocomplete="current-password" /></label>
-      <button id="loginBtn">Login</button>
+    <section id="authSection" class="card">
+      <p class="card-kicker">Welcome back</p>
+      <h1 class="card-title">Sign in to collect</h1>
+      <p class="card-copy">Use your Outreach Studio account. Captured emails go straight into LinkedIn Search.</p>
+      <label>Email
+        <div class="field"><input id="email" type="email" autocomplete="username" placeholder="you@company.com" /></div>
+      </label>
+      <label>Password
+        <div class="field"><input id="password" type="password" autocomplete="current-password" placeholder="••••••••" /></div>
+      </label>
+      <details>
+        <summary>Connection settings</summary>
+        <label>API base
+          <div class="field"><input id="apiBase" placeholder="http://localhost:8000" /></div>
+        </label>
+        <label>Studio URL
+          <div class="field"><input id="studioUrl" placeholder="http://localhost:5173" /></div>
+        </label>
+      </details>
+      <button class="primary" id="loginBtn">Continue to Collect</button>
+      <p class="foot-note" style="margin-top:12px;">Local-first · no LinkedIn password stored</p>
     </section>
 
-    <section id="captureSection" class="hidden">
-      <div>Signed in as <strong id="who"></strong> <button id="logoutBtn">Logout</button></div>
-      <div class="row">
-        <button id="captureBtn">Capture visible</button>
-        <button id="newRunBtn">New run</button>
+    <section id="captureSection" class="card hidden">
+      <div class="account">
+        <div class="account-left">
+          <div class="avatar" id="avatar">OS</div>
+          <div class="account-meta">
+            <strong id="who">—</strong>
+            <span>● Connected</span>
+          </div>
+        </div>
+        <button class="ghost tiny" id="logoutBtn" type="button">Sign out</button>
       </div>
-      <div class="row">
-        <label style="flex:1">Max jobs <input id="maxJobs" type="number" min="1" max="500" value="300" /></label>
-        <label style="flex:1">Delay (ms) <input id="delayMs" type="number" min="400" value="800" /></label>
+
+      <div class="steps" aria-hidden="true">
+        <div class="step"><b>01</b><span>Keywords</span></div>
+        <div class="step"><b>02</b><span>Auto-scroll</span></div>
+        <div class="step"><b>03</b><span>Open Studio</span></div>
       </div>
-      <div class="row">
-        <button id="deepBtn">Deep capture</button>
-        <button id="stopBtn">Stop</button>
-      </div>
-      <label>Job IDs for details (optional, comma-separated)
-        <input id="detailIds" placeholder="blank = all pending" />
+
+      <label>Search keywords
+        <div class="field"><input id="keywords" type="text" placeholder="hiring, recruiter, email" autocomplete="off" /></div>
       </label>
-      <button id="detailsBtn">Fetch details</button>
-      <small>Studio's “Fetch job details” button is picked up automatically (about every 30 s) while this panel's browser has a LinkedIn Jobs tab active and nothing else is running.</small>
-      <div id="progress">Captured: 0 / 0</div>
-      <div id="detailProgress"></div>
-      <div><a id="studioLink" class="hidden" target="_blank" rel="noopener">Open Studio</a></div>
+      <label>Emails needed
+        <div class="field"><input id="targetEmails" type="number" min="1" max="500" value="20" /></div>
+      </label>
+      <div class="tips">
+        <span class="tip"><b>Tip</b> keep LinkedIn tab open</span>
+        <span class="tip"><b>Tip</b> public @ only</span>
+      </div>
+
+      <button class="primary" id="startBtn">Collect emails</button>
+      <div class="row">
+        <button class="ghost" id="stopBtn" type="button">Stop</button>
+        <button class="ghost" id="newRunBtn" type="button">New run</button>
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <small>Emails found</small>
+          <strong id="statEmails">0 <em>/ 20</em></strong>
+        </div>
+        <div class="stat">
+          <small>Posts scanned</small>
+          <strong id="statItems">0</strong>
+        </div>
+      </div>
+      <div id="progress">Ready to collect</div>
+      <div class="meter" aria-hidden="true"><span id="meterFill"></span></div>
+      <button type="button" class="studio hidden" id="studioLink">Open in Studio →</button>
     </section>
 
     <div id="status"></div>

@@ -15,3 +15,5 @@ dump.rdb
 celerybeat-schedule*
 .local/
 backend/uploads/
+
+.tmp-reach-in/

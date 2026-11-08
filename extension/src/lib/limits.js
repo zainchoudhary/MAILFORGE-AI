@@ -1,6 +1,6 @@
 // Server-side clamps for capture options (UI min/max attributes are not trusted).
 export const LIMITS = {
-  maxJobs: { min: 1, max: 500, def: 300 },
+  maxJobs: { min: 1, max: 5000, def: 300 },
   deepDelayMs: { min: 400, def: 800 },
   detailDelayMs: { min: 400, def: 1200 },
 };

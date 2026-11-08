@@ -8,13 +8,15 @@
   const cache = {};
   const load = (name) => (cache[name] ||= mod(name));
   const loadAll = async () => {
-    const [parse, detail, capture, selectors] = await Promise.all([
+    const [parse, posts, detail, capture, selectors, searchCollect] = await Promise.all([
       load("parse"),
+      load("posts"),
       load("detail"),
       load("capture"),
       load("selectors"),
+      load("searchCollect"),
     ]);
-    return { parse, detail, capture, selectors };
+    return { parse, posts, detail, capture, selectors, searchCollect };
   };
   const err = (e) => String((e && e.message) || e);
 
@@ -42,6 +44,159 @@
     return false;
   }
 
+  async function scrollFeed(sleep, postsMod) {
+    // ReachIn: content search scrolls `<main>`, not window. Expand truncated posts first.
+    if (postsMod?.expandAllSeeMore) postsMod.expandAllSeeMore(document);
+
+    const cardSel =
+      ".feed-shared-update-v2, .occludable-update, div[data-urn*='activity:'], [data-chameleon-result-urn]";
+    const beforeCount = document.querySelectorAll(cardSel).length;
+    const beforeDocH = document.documentElement.scrollHeight;
+
+    const roots = [
+      document.querySelector("main"),
+      document.querySelector(".scaffold-finite-scroll__content"),
+      document.querySelector(".scaffold-layout__main"),
+      document.querySelector("main.scaffold-layout__main"),
+      document.querySelector('[role="main"]'),
+      document.querySelector(".application-outlet"),
+      document.scrollingElement,
+      document.documentElement,
+    ].filter(Boolean);
+
+    let moved = false;
+    for (const el of roots) {
+      const isWindow = el === document.documentElement || el === document.scrollingElement;
+      const beforeTop = isWindow ? window.scrollY : el.scrollTop;
+      const beforeH = el.scrollHeight || document.documentElement.scrollHeight;
+      const step = Math.max((el.clientHeight || window.innerHeight) * 0.95, 500);
+      if (isWindow) window.scrollBy(0, step);
+      else {
+        if (typeof el.scrollBy === "function") el.scrollBy(0, step);
+        else el.scrollTop = beforeTop + step;
+        el.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }
+      await sleep(700);
+      if (postsMod?.expandAllSeeMore) postsMod.expandAllSeeMore(document);
+      const afterTop = isWindow ? window.scrollY : el.scrollTop;
+      const afterH = el.scrollHeight || document.documentElement.scrollHeight;
+      if (afterTop > beforeTop + 25 || afterH > beforeH + 25) {
+        moved = true;
+        break;
+      }
+    }
+
+    // Nudge last card + small bounce (up then down) to re-trigger LinkedIn infinite scroll.
+    const cards = document.querySelectorAll(cardSel);
+    const main = document.querySelector("main");
+    if (cards.length) {
+      cards[cards.length - 1].scrollIntoView({ block: "end", behavior: "instant" });
+      await sleep(800);
+      if (postsMod?.expandAllSeeMore) postsMod.expandAllSeeMore(document);
+      window.scrollBy(0, 450);
+      if (main && typeof main.scrollBy === "function") main.scrollBy(0, 450);
+      await sleep(600);
+      // Bounce: scroll up slightly then back down — LinkedIn often stalls at absolute bottom.
+      window.scrollBy(0, -280);
+      if (main && typeof main.scrollBy === "function") main.scrollBy(0, -280);
+      await sleep(400);
+      window.scrollBy(0, 500);
+      if (main && typeof main.scrollBy === "function") main.scrollBy(0, 500);
+      await sleep(800);
+    }
+
+    const afterCount = document.querySelectorAll(cardSel).length;
+    const afterDocH = document.documentElement.scrollHeight;
+    if (afterCount > beforeCount || afterDocH > beforeDocH + 40) return true;
+    return moved;
+  }
+
+  function emailsAlreadyInItems(items) {
+    const set = new Set();
+    const re = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+    for (const item of items) {
+      const blob = `${item.detail_payload?.description || ""} ${item.list_payload?.preview || ""}`;
+      for (const m of blob.match(re) || []) set.add(m.toLowerCase());
+    }
+    return set;
+  }
+
+  function parsePage(parse, posts, searchCollect) {
+    const onJobs = /\/jobs\//.test(location.pathname);
+    const onContentSearch = /\/search\/results\/content/i.test(location.pathname);
+    if (posts.expandAllSeeMore) posts.expandAllSeeMore(document);
+
+    let items = onJobs
+      ? parse.parseVisibleJobs(document, location.origin)
+      : posts.parseVisiblePosts(document, location.origin);
+    if (!items.length) {
+      items = onJobs
+        ? posts.parseVisiblePosts(document, location.origin)
+        : parse.parseVisibleJobs(document, location.origin);
+    }
+
+    // ReachIn-style page sweep: any visible @ not already in a post card still gets uploaded.
+    if (!onJobs && searchCollect?.extractEmailsFromDocument) {
+      const pageEmails = searchCollect.extractEmailsFromDocument(document);
+      const known = emailsAlreadyInItems(items);
+      const missing = pageEmails.filter((e) => !known.has(e));
+      if (missing.length) {
+        const keywords = searchCollect.getUrlSearchKeywords?.(location.href) || "";
+        const cardSel =
+          ".feed-shared-update-v2, .occludable-update, div[data-urn*='activity:'], div[data-urn*='ugcPost:'], [data-chameleon-result-urn]";
+        const urlForEmail = (email) => {
+          const needle = String(email || "").toLowerCase();
+          if (!needle || !posts.postUrl) return "";
+          for (const card of document.querySelectorAll(cardSel)) {
+            if (!(card.innerText || "").toLowerCase().includes(needle)) continue;
+            const url = posts.postUrl(card, location.origin);
+            if (url && !posts.isSearchOrListUrl?.(url)) return url;
+          }
+          return "";
+        };
+        items = items.concat(
+          searchCollect.emailsAsSyntheticPosts(missing, {
+            base: "",
+            keywords,
+            urlForEmail,
+          })
+        );
+      }
+    }
+
+    void onContentSearch;
+    return items;
+  }
+
+  function isSearchDomReady() {
+    const loaders = document.querySelectorAll(
+      '.artdeco-loader, [aria-label="Loading"], .search-results__loader, .search-results__loader-state'
+    );
+    const hasVisibleLoader = [...loaders].some(
+      (el) => el.offsetParent !== null || el.getClientRects().length > 0
+    );
+    if (hasVisibleLoader) return false;
+
+    const resultSelectors = [
+      ".feed-shared-update-v2",
+      "[data-chameleon-result-urn]",
+      ".reusable-search__result-container",
+      ".search-marvel-srp",
+      ".entity-result",
+      "main article",
+      "main [data-urn]",
+      ".update-components-actor",
+    ];
+    for (const sel of resultSelectors) {
+      if (document.querySelector(sel)) return true;
+    }
+    if (document.querySelector(".search-no-results-placeholder, .search-reusables__no-results")) {
+      return true;
+    }
+    const main = document.querySelector("main");
+    return Boolean(main && main.innerText.trim().length > 50);
+  }
+
   async function runDeepCapture({ maxJobs, delayMs }) {
     const { parse, capture, selectors } = await loadAll();
     const send = (m) => chrome.runtime.sendMessage(m);
@@ -63,6 +218,52 @@
       result = { count: 0, reason: "error", error: err(e) };
     }
     await send({ type: "DEEP_DONE", ...result }).catch(() => {});
+  }
+
+  /** Auto-scroll until server reports enough extracted emails (Lead Finder–style). */
+  async function runHunt({ targetEmails, delayMs, maxItems }) {
+    const { parse, posts, capture, selectors, searchCollect } = await loadAll();
+    const send = (m) => chrome.runtime.sendMessage(m);
+    const onJobs = /\/jobs\//.test(location.pathname);
+    let result;
+    try {
+      result = await capture.huntLeads({
+        targetEmails,
+        maxItems,
+        delayMs,
+        parse: () => parsePage(parse, posts, searchCollect),
+        shouldStop: () => stopRequested,
+        isBlocked: () => blocked(capture),
+        scrollOrNextPage: () =>
+          onJobs
+            ? scrollOrNextPage(selectors, capture.sleep)
+            : scrollFeed(capture.sleep, posts),
+        onBatch: async (items) => {
+          // On Jobs pages, enrich a few cards with detail text so emails can be extracted.
+          if (onJobs) {
+            for (const item of items.slice(0, 3)) {
+              if (item.detail_payload?.description) continue;
+              try {
+                const d = await fetchOne({ jobId: item.linkedin_job_id, delayMs });
+                if (d?.ok && d.detail_payload) {
+                  item.detail_payload = d.detail_payload;
+                  item.detail_status = "fetched";
+                }
+              } catch {
+                /* keep going */
+              }
+              if (stopRequested) break;
+            }
+          }
+          const r = await send({ type: "HUNT_BATCH", jobs: items });
+          if (!r || r.ok === false) throw new Error((r && r.error) || "Upload failed");
+          return { emailsFound: r.emailsFound || 0 };
+        },
+      });
+    } catch (e) {
+      result = { count: 0, emails: 0, reason: "error", error: err(e) };
+    }
+    await send({ type: "HUNT_DONE", ...result }).catch(() => {});
   }
 
   // Open a job in the split pane (click its card), wait for it to render, read the description.
@@ -120,24 +321,57 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg) return false;
-    if (msg.type === "CAPTURE_VISIBLE") {
+    if (msg.type === "CHECK_SEARCH_READY") {
+      load("searchCollect")
+        .then((searchCollect) => {
+          const onSearch = /linkedin\.com\/search\/results\/content/i.test(location.href);
+          const urlKeywords = searchCollect.getUrlSearchKeywords(location.href);
+          const match = msg.processedKeywords
+            ? searchCollect.keywordsMatch(urlKeywords, msg.processedKeywords)
+            : onSearch;
+          const domReady = isSearchDomReady();
+          const ready =
+            onSearch &&
+            match &&
+            (document.readyState === "complete" || document.readyState === "interactive") &&
+            (domReady || Number(msg.pollCount || 0) >= 2);
+          sendResponse({ ok: true, ready, keywordsMatch: match, domReady, onSearch });
+        })
+        .catch((e) => sendResponse({ ok: false, error: err(e) }));
+      return true;
+    }
+    if (msg.type === "CAPTURE_VISIBLE" || msg.type === "CAPTURE_PAGE") {
       loadAll()
-        .then(({ parse }) => {
-          const jobs = parse.parseVisibleJobs(document, location.origin);
-          sendResponse({ ok: true, jobs, search_url: location.href });
+        .then(({ parse, posts, searchCollect }) => {
+          const onJobs = /\/jobs\//.test(location.pathname);
+          const onSearch = /\/search\/results\/content/i.test(location.pathname);
+          const items = parsePage(parse, posts, searchCollect);
+          sendResponse({
+            ok: true,
+            jobs: items,
+            kind: onJobs ? "jobs" : onSearch ? "content_search" : "posts",
+            search_url: location.href,
+          });
         })
         .catch((e) => sendResponse({ ok: false, error: err(e) }));
       return true; // async response
     }
-    if (msg.type === "DEEP_START") {
+    if (msg.type === "HUNT_START" || msg.type === "DEEP_START") {
       if (deepRunning) {
-        sendResponse({ ok: false, error: "Deep capture already running" });
+        sendResponse({ ok: false, error: "Already running" });
         return false;
       }
       deepRunning = true;
       stopRequested = false;
-      // Respond immediately; progress flows back via DEEP_BATCH / DEEP_DONE messages.
-      runDeepCapture({ maxJobs: msg.maxJobs, delayMs: msg.delayMs }).finally(() => {
+      const run =
+        msg.type === "HUNT_START"
+          ? runHunt({
+              targetEmails: msg.targetEmails,
+              delayMs: msg.delayMs,
+              maxItems: msg.maxItems,
+            })
+          : runDeepCapture({ maxJobs: msg.maxJobs, delayMs: msg.delayMs });
+      run.finally(() => {
         deepRunning = false;
       });
       sendResponse({ ok: true });

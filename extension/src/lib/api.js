@@ -3,14 +3,36 @@ const KEYS = ["apiBase", "studioUrl", "access_token", "refresh_token", "email"];
 
 export const DEFAULTS = {
   apiBase: "http://localhost:8000",
-  studioUrl: "http://localhost:8080",
+  studioUrl: "http://localhost:5173",
 };
 
 export const normalizeBase = (u) => (u || "").trim().replace(/\/+$/, "");
 
+/** Old builds / manual settings often pointed Studio at :8080 — Vite serves :5173. */
+export function normalizeStudioUrl(u) {
+  const base = normalizeBase(u || DEFAULTS.studioUrl);
+  try {
+    const url = new URL(base);
+    const host = url.hostname;
+    if ((host === "localhost" || host === "127.0.0.1") && url.port === "8080") {
+      url.port = "5173";
+      return normalizeBase(url.toString());
+    }
+  } catch {
+    /* keep as-is */
+  }
+  return base || DEFAULTS.studioUrl;
+}
+
 export async function getSettings() {
   const s = await chrome.storage.local.get(KEYS);
-  return { ...DEFAULTS, ...s };
+  const merged = { ...DEFAULTS, ...s };
+  const studioUrl = normalizeStudioUrl(merged.studioUrl);
+  if (studioUrl !== merged.studioUrl) {
+    await chrome.storage.local.set({ studioUrl });
+    merged.studioUrl = studioUrl;
+  }
+  return merged;
 }
 
 export async function saveSettings(patch) {
@@ -153,5 +175,5 @@ export function listPendingJobs(runId, limit = 200) {
 }
 
 export function studioRunUrl(studioUrl, runId) {
-  return `${normalizeBase(studioUrl)}/lead-finder/linkedin?run=${encodeURIComponent(runId)}`;
+  return `${normalizeStudioUrl(studioUrl)}/lead-finder/linkedin?run=${encodeURIComponent(runId)}`;
 }

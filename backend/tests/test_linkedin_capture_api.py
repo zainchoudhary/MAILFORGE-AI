@@ -131,6 +131,33 @@ def test_batch_respects_hard_ceiling(client, account, db, monkeypatch):
     assert res.status_code == 422
 
 
+def test_delete_run_removes_jobs_and_candidates(client, account, db):
+    run_id = _new_run(client, account)
+    client.post(
+        f"{BASE}/runs/{run_id}/jobs/batch",
+        headers=account,
+        json={"jobs": [_job(detail_payload={"description": "Email wipe@acme.test now."})]},
+    )
+    assert client.get(f"{BASE}/runs/{run_id}/candidates", headers=account).json()["total"] >= 1
+
+    deleted = client.delete(f"{BASE}/runs/{run_id}", headers=account)
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["deleted"] == 1
+    assert client.get(f"{BASE}/runs/{run_id}", headers=account).status_code == 404
+    listed = client.get(f"{BASE}/runs", headers=account).json()["items"]
+    assert all(item["id"] != run_id for item in listed)
+
+
+def test_bulk_delete_runs(client, account):
+    a = _new_run(client, account)
+    b = _new_run(client, account)
+    res = client.post(f"{BASE}/runs/bulk-delete", headers=account, json={"run_ids": [a, b]})
+    assert res.status_code == 200, res.text
+    assert res.json()["deleted"] == 2
+    ids = {item["id"] for item in client.get(f"{BASE}/runs", headers=account).json()["items"]}
+    assert a not in ids and b not in ids
+
+
 def test_requires_auth(client):
     assert client.get(f"{BASE}/runs").status_code in (401, 403)
 

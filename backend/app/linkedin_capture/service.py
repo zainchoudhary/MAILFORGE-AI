@@ -7,7 +7,7 @@ this module never calls Serper/CSE or fetches pages.
 import logging
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -173,6 +173,52 @@ def cancel_run(db: Session, user, run_id: str) -> LinkedInCaptureRun:
     return run
 
 
+def delete_runs(db: Session, user, run_ids: list[str]) -> dict:
+    """Hard-delete capture runs and their jobs/candidates from the DB."""
+    ids = list(dict.fromkeys([str(rid).strip() for rid in (run_ids or []) if str(rid).strip()]))
+    if not ids:
+        raise HTTPException(422, "Select at least one capture to delete")
+    if len(ids) > 100:
+        raise HTTPException(422, "You can delete at most 100 captures at once")
+
+    runs = list(
+        db.scalars(
+            select(LinkedInCaptureRun).where(
+                LinkedInCaptureRun.organization_id == user.organization_id,
+                LinkedInCaptureRun.id.in_(ids),
+            )
+        )
+    )
+    found = {r.id for r in runs}
+    missing = [rid for rid in ids if rid not in found]
+    if missing:
+        raise HTTPException(404, f"Capture not found: {missing[0]}")
+
+    # Candidates reference job_raw; delete children first (no ON DELETE CASCADE).
+    db.execute(
+        delete(LinkedInLeadCandidate).where(
+            LinkedInLeadCandidate.organization_id == user.organization_id,
+            LinkedInLeadCandidate.run_id.in_(ids),
+        )
+    )
+    db.execute(
+        delete(LinkedInJobRaw).where(
+            LinkedInJobRaw.organization_id == user.organization_id,
+            LinkedInJobRaw.run_id.in_(ids),
+        )
+    )
+    db.execute(
+        delete(LinkedInCaptureRun).where(
+            LinkedInCaptureRun.organization_id == user.organization_id,
+            LinkedInCaptureRun.id.in_(ids),
+        )
+    )
+    for run_id in ids:
+        audit(db, user, "linkedin_capture.run_deleted", run_id)
+    db.commit()
+    return {"deleted": len(ids), "run_ids": ids}
+
+
 # -------------------------------------------------------------------- batch upsert
 
 
@@ -242,7 +288,16 @@ def upsert_jobs_batch(
             if val:
                 setattr(job, field, val)
         if raw.get("job_url"):
-            job.job_url = str(raw["job_url"]).strip()
+            from app.linkedin_capture.extract import canonicalize_post_url
+
+            cleaned = canonicalize_post_url(
+                job_url=str(raw["job_url"]).strip(),
+                linkedin_job_id=jid,
+                list_payload=raw.get("list_payload") if isinstance(raw.get("list_payload"), dict) else {},
+                detail_payload=raw.get("detail_payload") if isinstance(raw.get("detail_payload"), dict) else {},
+            )
+            if cleaned:
+                job.job_url = cleaned
         lp = raw.get("list_payload")
         if isinstance(lp, dict) and lp:
             job.list_payload = {**(job.list_payload or {}), **lp}
@@ -379,6 +434,7 @@ def extract_run(
                 job_url=job.job_url,
                 list_payload=job.list_payload,
                 detail_payload=job.detail_payload,
+                linkedin_job_id=job.linkedin_job_id or "",
             )
             for draft in drafts:
                 outcome = _upsert_candidate(db, run, job, draft)

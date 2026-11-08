@@ -1,4 +1,4 @@
-from app.linkedin_capture.extract import extract_from_job, job_text_for_extract
+from app.linkedin_capture.extract import canonicalize_post_url, extract_from_job, job_text_for_extract
 
 
 def test_extracts_email_from_detail_description():
@@ -29,6 +29,26 @@ def test_no_email_means_empty():
         detail_payload={"description": "No contact listed. Easy Apply only."},
     )
     assert drafts == []
+
+
+def test_feed_post_extracts_email_and_author():
+    drafts = extract_from_job(
+        title="Alex Rivera",
+        company="Hiring Manager at Northwind",
+        location="",
+        job_url="https://www.linkedin.com/posts/alex-activity-1",
+        list_payload={"kind": "post", "author": "Alex Rivera", "subtitle": "Hiring Manager at Northwind"},
+        detail_payload={
+            "kind": "post",
+            "author": "Alex Rivera",
+            "subtitle": "Hiring Manager at Northwind",
+            "description": "Reach me at alex.rivera@northwind.test for roles.",
+        },
+    )
+    assert len(drafts) >= 1
+    assert drafts[0].email == "alex.rivera@northwind.test"
+    assert drafts[0].signals.get("source") == "linkedin_post"
+    assert "Alex" in (drafts[0].name or "")
 
 
 def test_noreply_excluded():
@@ -95,3 +115,28 @@ def test_snippet_uses_near_email_context_not_job_header():
     )
     assert len(drafts) == 1
     assert "jane@acme.com" in drafts[0].snippet
+
+
+def test_search_results_url_replaced_with_activity_permalink():
+    url = canonicalize_post_url(
+        job_url="https://www.linkedin.com/search/results/content/?keywords=email",
+        linkedin_job_id="p7123456789012345678",
+    )
+    assert url == "https://www.linkedin.com/feed/update/urn:li:activity:7123456789012345678/"
+
+    drafts = extract_from_job(
+        title="Alex Rivera",
+        company="",
+        location="",
+        job_url="https://www.linkedin.com/search/results/content/?keywords=hiring",
+        list_payload={"kind": "post", "author": "Alex Rivera"},
+        detail_payload={
+            "kind": "post",
+            "description": "Email me alex.rivera@northwind.test",
+        },
+        linkedin_job_id="p7123456789012345678",
+    )
+    assert drafts[0].email == "alex.rivera@northwind.test"
+    assert drafts[0].source_url == (
+        "https://www.linkedin.com/feed/update/urn:li:activity:7123456789012345678/"
+    )

@@ -69,3 +69,7 @@ class CaptureCandidatePatch(_Input):
 class CaptureSaveGroupInput(_Input):
     group_name: str = Field(min_length=1, max_length=200)
     candidate_ids: list[str] | None = None
+
+
+class CaptureRunsDeleteInput(_Input):
+    run_ids: list[str] = Field(min_length=1, max_length=100)

@@ -12,6 +12,12 @@ import {
 import { buildDetailJob } from "./lib/detail.js";
 import { sleep } from "./lib/capture.js";
 import { clampMaxJobs, clampDeepDelay, clampDetailDelay, MAX_CONSECUTIVE_DETAIL_FAILURES } from "./lib/limits.js";
+import {
+  processKeywords,
+  buildContentSearchUrl,
+  detectCollectionContext,
+  isLinkedInUrl,
+} from "./lib/searchCollect.js";
 
 const BATCH_SIZE = 100;
 
@@ -40,12 +46,70 @@ async function setCapture(patch) {
   return next;
 }
 
-async function activeLinkedInTab() {
+async function activeLinkedInTab({ jobsOnly = false, optional = false } = {}) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !/^https:\/\/www\.linkedin\.com\/jobs\//.test(tab.url || "")) {
-    throw new Error("Open a LinkedIn Jobs search page in the active tab first");
+  const url = tab?.url || "";
+  if (!tab || !/^https:\/\/www\.linkedin\.com\//.test(url)) {
+    if (optional) return null;
+    throw new Error("Open a LinkedIn tab first (feed, post, or Jobs search)");
+  }
+  if (jobsOnly && !/\/jobs\//.test(url)) {
+    throw new Error("Deep jobs capture needs a LinkedIn Jobs search tab");
   }
   return tab;
+}
+
+async function findLinkedInTab(windowId) {
+  const query = { url: ["https://www.linkedin.com/*", "https://linkedin.com/*"] };
+  if (windowId != null) query.windowId = windowId;
+  else query.lastFocusedWindow = true;
+  const tabs = await chrome.tabs.query(query);
+  if (!tabs?.length) return null;
+  return tabs.find((t) => t.active) || tabs[tabs.length - 1];
+}
+
+function waitTabComplete(tabId, timeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      reject(new Error("LinkedIn took too long to load"));
+    }, timeoutMs);
+    const onUpdated = (id, info) => {
+      if (id === tabId && info.status === "complete") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        resolve();
+      }
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.get(tabId).then((tab) => {
+      if (tab?.status === "complete") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        resolve();
+      }
+    }).catch(() => {});
+  });
+}
+
+async function waitSearchReady(tabId, processedKeywords, timeoutMs = 45000) {
+  const deadline = Date.now() + timeoutMs;
+  let pollCount = 0;
+  while (Date.now() < deadline) {
+    pollCount += 1;
+    try {
+      const res = await sendToTab(tabId, {
+        type: "CHECK_SEARCH_READY",
+        processedKeywords,
+        pollCount,
+      });
+      if (res?.ready) return true;
+    } catch {
+      /* content script may still be injecting */
+    }
+    await sleep(1500);
+  }
+  throw new Error("LinkedIn search page did not become ready");
 }
 
 async function sendToTab(tabId, message) {
@@ -60,15 +124,43 @@ async function sendToTab(tabId, message) {
 
 async function captureVisible() {
   const tab = await activeLinkedInTab();
-  const res = await sendToTab(tab.id, { type: "CAPTURE_VISIBLE" });
+  const res = await sendToTab(tab.id, { type: "CAPTURE_PAGE" });
   if (!res || !res.ok) throw new Error((res && res.error) || "Capture failed");
-  return res; // { jobs, search_url }
+  return res; // { jobs, search_url, kind }
+}
+
+function isCancelledRunError(err) {
+  const msg = String((err && err.message) || err || "");
+  return Boolean(err && err.status === 409 && /cancelled run cannot accept/i.test(msg));
+}
+
+async function runStillOpen(runId) {
+  if (!runId) return false;
+  try {
+    const run = await getRun(runId);
+    return Boolean(run && run.status && run.status !== "cancelled");
+  } catch {
+    return false;
+  }
 }
 
 async function ensureRun({ newRun = false, search_url = "" } = {}) {
   let { capture = {} } = await chrome.storage.local.get("capture");
-  if (newRun || !capture.runId) {
-    await setCapture({ status: "creating_run", total: 0, sent: 0, jobIds: [], detailDone: [], error: "" });
+  let reuse = !newRun && Boolean(capture.runId);
+  if (reuse && !(await runStillOpen(capture.runId))) {
+    // Studio cancel (or deleted run) — do not keep posting batches to a dead runId.
+    reuse = false;
+  }
+  if (!reuse) {
+    await setCapture({
+      status: "creating_run",
+      total: 0,
+      sent: 0,
+      jobIds: [],
+      detailDone: [],
+      error: "",
+      stopReason: "",
+    });
     const run = await createRun({ search_url, search_query_snapshot: search_url });
     capture = await setCapture({ runId: run.id, total: 0, sent: 0 });
   }
@@ -78,44 +170,205 @@ async function ensureRun({ newRun = false, search_url = "" } = {}) {
 // Upload list jobs in chunks, tracking totals and captured ids (for later detail fetch).
 async function uploadJobs(runId, jobs) {
   let { capture = {} } = await chrome.storage.local.get("capture");
+  let activeRunId = runId || capture.runId;
+  if (!activeRunId) throw new Error("No active run");
   await setCapture({ status: "uploading", total: (capture.total || 0) + jobs.length, error: "" });
   let sent = capture.sent || 0;
   const ids = new Set(capture.jobIds || []);
   for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
     const chunk = jobs.slice(i, i + BATCH_SIZE);
     try {
-      await batchJobs(runId, chunk, true); // retries network errors / 5xx internally
+      await batchJobs(activeRunId, chunk, true); // retries network errors / 5xx internally
     } catch (e) {
-      const msg = `Upload failed after retries (${sent} of ${jobs.length} sent): ${String(e.message || e)}`;
-      await setCapture({ sent, jobIds: [...ids], status: "error", error: msg });
-      throw new Error(msg);
+      if (isCancelledRunError(e)) {
+        // Run was cancelled in Studio mid-hunt — open a fresh run and continue this batch.
+        const next = await ensureRun({
+          newRun: true,
+          search_url: capture.searchUrl || capture.search_url || "",
+        });
+        activeRunId = next.runId;
+        sent = 0;
+        ids.clear();
+        try {
+          await batchJobs(activeRunId, chunk, true);
+        } catch (retryErr) {
+          const msg = `Upload failed after retries (${sent} of ${jobs.length} sent): ${String(retryErr.message || retryErr)}`;
+          await setCapture({ sent, jobIds: [...ids], status: "error", error: msg });
+          throw new Error(msg);
+        }
+      } else {
+        const msg = `Upload failed after retries (${sent} of ${jobs.length} sent): ${String(e.message || e)}`;
+        await setCapture({ sent, jobIds: [...ids], status: "error", error: msg });
+        throw new Error(msg);
+      }
     }
     sent += chunk.length;
     chunk.forEach((j) => ids.add(j.linkedin_job_id));
-    await setCapture({ sent, jobIds: [...ids] });
+    await setCapture({ sent, jobIds: [...ids], runId: activeRunId });
   }
+  return activeRunId;
 }
 
 async function startRun({ newRun = false } = {}) {
-  const { jobs, search_url } = await captureVisible();
-  if (!jobs.length) throw new Error("No job cards found on this page");
+  const { jobs, search_url, kind } = await captureVisible();
+  if (!jobs.length) {
+    throw new Error(
+      kind === "jobs"
+        ? "No job cards found — scroll the Jobs list so cards are visible, then try again"
+        : "No posts found on this page — open your feed or a post thread and try again"
+    );
+  }
   const capture = await ensureRun({ newRun, search_url });
   await uploadJobs(capture.runId, jobs);
-  return setCapture({ status: "done" });
+  // Posts already include detail_payload; refresh candidate count from the run if available.
+  let emailsFound;
+  try {
+    const run = await getRun(capture.runId);
+    emailsFound = run?.candidate_count ?? run?.progress?.candidates_kept;
+  } catch {
+    emailsFound = undefined;
+  }
+  return setCapture({ status: "done", kind: kind || "page", emailsFound });
 }
 
-// ---- Deep capture + detail fetch (Task 6) ----
+async function emailsForRun(runId) {
+  try {
+    const run = await getRun(runId);
+    return Number(run?.candidate_count ?? run?.progress?.candidates_kept ?? 0) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+// ---- Auto hunt (scroll until N emails) + deep jobs + detail fetch ----
 let deep = { tabId: null };
 let detailRunning = false;
 let stopRequested = false;
 
 function assertIdle() {
-  if (deep.tabId !== null || detailRunning) throw new Error("A deep capture or detail fetch is already running");
+  if (deep.tabId !== null || detailRunning) throw new Error("Already running — press Stop first");
+}
+
+/** Lead Finder–style: scroll LinkedIn until we have targetEmails extracted leads. */
+async function startAutoHunt({
+  targetEmails = 20,
+  delayMs = 1100,
+  maxItems = 500,
+  tabId = null,
+  searchUrl = "",
+  keywords = "",
+  newRun = false,
+} = {}) {
+  assertIdle();
+  let tab;
+  if (tabId != null) {
+    tab = await chrome.tabs.get(tabId);
+  } else {
+    tab = await activeLinkedInTab();
+  }
+  const target = Math.max(1, Math.min(500, Number(targetEmails) || 20));
+  // Collect / keyword hunts always start a fresh Studio run so a cancelled runId is never reused.
+  const capture = await ensureRun({
+    newRun: newRun || Boolean(keywords),
+    search_url: searchUrl || tab.url || "",
+  });
+  stopRequested = false;
+  // Scan far more posts than the email target — public @ addresses are sparse.
+  const huntCap = clampMaxJobs(Math.max(maxItems, target * 100, 2000));
+  const res = await sendToTab(tab.id, {
+    type: "HUNT_START",
+    targetEmails: target,
+    delayMs: Math.max(clampDeepDelay(delayMs), 1100),
+    maxItems: huntCap,
+  });
+  if (!res || !res.ok) throw new Error((res && res.error) || "Could not start");
+  deep.tabId = tab.id;
+  return setCapture({
+    status: "hunting",
+    error: "",
+    stopReason: "",
+    runId: capture.runId,
+    targetEmails: target,
+    emailsFound: 0,
+    sent: capture.sent || 0,
+    total: capture.total || 0,
+    keywords: keywords || "",
+    searchUrl: searchUrl || tab.url || "",
+  });
+}
+
+/**
+ * ReachIn-style smart collect:
+ * keywords → LinkedIn content search → wait for results → auto-scroll + extract → Studio sync.
+ */
+async function startSmartCollect({
+  keywords = "",
+  targetEmails = 20,
+  delayMs = 1100,
+  maxItems = 500,
+  windowId = null,
+} = {}) {
+  assertIdle();
+  const processed = processKeywords(keywords);
+  if (!processed) throw new Error("Enter search keywords (comma-separated)");
+
+  const searchUrl = buildContentSearchUrl(processed);
+  const target = Math.max(1, Math.min(500, Number(targetEmails) || 20));
+
+  await setCapture({
+    status: "navigating",
+    error: "",
+    stopReason: "",
+    keywords: String(keywords).trim(),
+    searchUrl,
+    targetEmails: target,
+    emailsFound: 0,
+  });
+
+  let tab = await activeLinkedInTab({ optional: true });
+  let url = tab?.url || "";
+  if (!isLinkedInUrl(url)) {
+    const existing = await findLinkedInTab(windowId);
+    if (existing) {
+      tab = existing;
+      url = existing.url || "";
+    }
+  }
+
+  const context = detectCollectionContext(url, processed);
+  let tabId;
+
+  if (context === "offLinkedIn") {
+    const created = await chrome.tabs.create({ url: searchUrl, active: true });
+    tabId = created.id;
+    await waitTabComplete(tabId);
+  } else if (context === "linkedInOther" || context === "searchMismatch") {
+    tabId = tab.id;
+    await chrome.tabs.update(tabId, { url: searchUrl, active: true });
+    await waitTabComplete(tabId);
+  } else {
+    tabId = tab.id;
+    await chrome.tabs.update(tabId, { active: true });
+  }
+
+  await waitSearchReady(tabId, processed);
+  // Small settle delay so LinkedIn finishes hydrating cards (ReachIn uses ~1.5s).
+  await sleep(1500);
+
+  return startAutoHunt({
+    targetEmails: target,
+    delayMs,
+    maxItems,
+    tabId,
+    searchUrl,
+    keywords: String(keywords).trim(),
+    newRun: true,
+  });
 }
 
 async function startDeepCapture({ maxJobs = 300, delayMs = 800 } = {}) {
   assertIdle();
-  const tab = await activeLinkedInTab();
+  const tab = await activeLinkedInTab({ jobsOnly: true });
   const capture = await ensureRun({ search_url: tab.url });
   stopRequested = false;
   const res = await sendToTab(tab.id, { type: "DEEP_START", maxJobs: clampMaxJobs(maxJobs), delayMs: clampDeepDelay(delayMs) });
@@ -169,7 +422,7 @@ async function pollPendingDetails() {
   if (deep.tabId !== null || detailRunning) return { started: false, reason: "busy" };
   const { capture = {} } = await chrome.storage.local.get("capture");
   if (!capture.runId) return { started: false, reason: "no_run" };
-  if (["creating_run", "uploading", "deep_capturing", "fetching_details", "blocked"].includes(capture.status)) {
+  if (["creating_run", "uploading", "navigating", "deep_capturing", "hunting", "fetching_details", "blocked"].includes(capture.status)) {
     return { started: false, reason: "not_idle" };
   }
   if (SKIP_POLL_REASONS.includes(capture.stopReason)) return { started: false, reason: capture.stopReason };
@@ -310,30 +563,89 @@ const handlers = {
     enqueue(async () => {
       const { capture = {} } = await chrome.storage.local.get("capture");
       if (!capture.runId) throw new Error("No active run");
-      await uploadJobs(capture.runId, msg.jobs || []);
-      await setCapture({ status: "deep_capturing" });
-      return { ok: true };
+      const runId = await uploadJobs(capture.runId, msg.jobs || []);
+      const emailsFound = await emailsForRun(runId);
+      await setCapture({ status: "deep_capturing", emailsFound, runId });
+      return { ok: true, emailsFound };
+    }),
+  HUNT_BATCH: (msg) =>
+    enqueue(async () => {
+      const { capture = {} } = await chrome.storage.local.get("capture");
+      if (!capture.runId) throw new Error("No active run");
+      const runId = await uploadJobs(capture.runId, msg.jobs || []);
+      const emailsFound = await emailsForRun(runId);
+      await setCapture({ status: "hunting", emailsFound, runId });
+      return { ok: true, emailsFound };
     }),
   DEEP_DONE: (msg) =>
     enqueue(async () => {
       deep.tabId = null;
+      const { capture = {} } = await chrome.storage.local.get("capture");
+      const emailsFound = capture.runId ? await emailsForRun(capture.runId) : capture.emailsFound || 0;
       if (msg.reason === "error") {
-        await setCapture({ status: "error", error: msg.error || "Deep capture failed" });
+        await setCapture({ status: "error", error: msg.error || "Deep capture failed", emailsFound });
       } else {
         await setCapture({
           status: msg.reason === "blocked" ? "blocked" : "done",
           stopReason: msg.reason,
-          error: msg.reason === "blocked" ? "LinkedIn showed a checkpoint/CAPTCHA — solve it, then resume" : "",
+          emailsFound,
+          error: msg.reason === "blocked" ? "LinkedIn showed a checkpoint/CAPTCHA — solve it, then Start again" : "",
         });
       }
       return { ok: true };
     }),
+  HUNT_DONE: (msg) =>
+    enqueue(async () => {
+      deep.tabId = null;
+      const { capture = {} } = await chrome.storage.local.get("capture");
+      const emailsFound =
+        Number(msg.emails) ||
+        (capture.runId ? await emailsForRun(capture.runId) : 0) ||
+        capture.emailsFound ||
+        0;
+      if (msg.reason === "error") {
+        await setCapture({ status: "error", error: msg.error || "Hunt failed", emailsFound });
+      } else {
+        await setCapture({
+          status: msg.reason === "blocked" ? "blocked" : "done",
+          stopReason: msg.reason,
+          emailsFound,
+          error: msg.reason === "blocked" ? "LinkedIn checkpoint — solve it, then Start again" : "",
+        });
+      }
+      return { ok: true };
+    }),
+  async AUTO_HUNT(msg) {
+    assertIdle();
+    try {
+      // Prefer ReachIn-style content search when keywords are provided.
+      if (msg?.keywords && String(msg.keywords).trim()) {
+        const capture = await startSmartCollect(msg);
+        return { ok: true, capture };
+      }
+      const capture = await startAutoHunt(msg);
+      return { ok: true, capture };
+    } catch (err) {
+      await setCapture({ status: "error", error: String(err.message || err) });
+      throw err;
+    }
+  },
+  async SMART_COLLECT(msg) {
+    assertIdle();
+    try {
+      const capture = await startSmartCollect(msg);
+      return { ok: true, capture };
+    } catch (err) {
+      await setCapture({ status: "error", error: String(err.message || err) });
+      throw err;
+    }
+  },
   async STOP() {
     stopRequested = true;
     if (deep.tabId === null && !detailRunning) {
       // Nothing live in this worker (e.g. it restarted): clear any stale busy status.
       const { capture = {} } = await chrome.storage.local.get("capture");
-      if (["deep_capturing", "fetching_details"].includes(capture.status)) {
+      if (["navigating", "deep_capturing", "hunting", "fetching_details"].includes(capture.status)) {
         await setCapture({ status: "done", stopReason: "stopped" });
       }
     }

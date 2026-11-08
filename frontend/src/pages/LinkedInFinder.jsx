@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Ban, CheckCircle2, DownloadCloud, ExternalLink, FolderPlus, History, Mail } from 'lucide-react';
+import { Ban, CheckCircle2, ExternalLink, FolderPlus, History, Mail, Trash2 } from 'lucide-react';
 import { useApi, useAction } from '../hooks/useApi';
 import { errorText } from '../services/api';
 import {
@@ -11,9 +11,9 @@ import {
   PAGE_LIMIT,
   canCancelRun,
   cancelRun,
-  detailCounts,
+  deleteRun,
+  deleteRuns,
   extractRun,
-  fetchJobDetails,
   hasPendingDetails,
   isRunExtracting,
   isRunLive,
@@ -26,7 +26,7 @@ import {
   setCandidatesSelected,
   showingLabel,
 } from '../services/linkedinCapture';
-import { BusyButton, Empty, Field, PageHeader, QueryState, Status } from '../components/Common';
+import { BusyButton, ConfirmDialog, Empty, Field, PageHeader, QueryState, Status } from '../components/Common';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 
@@ -89,17 +89,17 @@ function CandidateRow({ runId, candidate, onChanged, onSelect }) {
           onChange={(event) => onSelect(candidate.id, event.target.checked)}
         />
       </td>
-      <td>{cell('name', 'Name')}</td>
-      <td>{cell('company', 'Company')}</td>
-      <td>{cell('position', 'Position')}</td>
       <td className="lead-email">
         <strong>{candidate.email}</strong>
         {candidate.existing_recipient_id && <small>Already in your recipients</small>}
       </td>
+      <td>{cell('name', 'Name')}</td>
+      <td>{cell('company', 'Company')}</td>
+      <td>{cell('position', 'Position')}</td>
       <td>
         {candidate.source_url ? (
           <a className="lead-source" href={candidate.source_url} target="_blank" rel="noopener noreferrer" title={candidate.source_title || candidate.source_url}>
-            <ExternalLink size={13} /> Job post
+            <ExternalLink size={13} /> Post
           </a>
         ) : <small>—</small>}
       </td>
@@ -109,18 +109,18 @@ function CandidateRow({ runId, candidate, onChanged, onSelect }) {
 
 export default function LinkedInFinder() {
   const client = useQueryClient();
-  const [activeId, setActiveId] = useState(null);
+  const [params, setParams] = useSearchParams();
+  const [activeId, setActiveId] = useState(() => params.get('run') || null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [saved, setSaved] = useState(null);
+  const [selectedRunIds, setSelectedRunIds] = useState([]);
+  const [deleteTarget, setDeleteTarget] = useState(null); // 'selected' | run object | null
 
-  // Jobs keep changing after the run leaves idle/extracting: the extension fills in details
-  // for pending jobs, and a fetch-details request may not have flipped statuses yet.
-  const detailsRequested = useRef(false);
   const jobsUrl = `${RUNS_KEY}/${activeId}/jobs?limit=${PAGE_LIMIT}`;
   const candidatesUrl = `${RUNS_KEY}/${activeId}/candidates?limit=${PAGE_LIMIT}`;
   const shouldPoll = (runValue, jobsValue) =>
-    isRunLive(runValue) || hasPendingDetails(jobsValue?.items) || detailsRequested.current;
+    isRunLive(runValue) || hasPendingDetails(jobsValue?.items);
 
   const runs = useApi(RUNS_KEY, {
     refetchInterval: (query) => {
@@ -134,28 +134,39 @@ export default function LinkedInFinder() {
   const run = useApi(`${RUNS_KEY}/${activeId}`, {
     enabled: !!activeId,
     refetchInterval: (query) => (shouldPoll(query.state.data, client.getQueryData([jobsUrl])) ? POLL_MS : false),
+    retry: (count, error) => (error?.response?.status === 404 ? false : count < 2),
   });
   const jobs = useApi(jobsUrl, {
     enabled: !!activeId,
     refetchInterval: (query) => (shouldPoll(client.getQueryData([`${RUNS_KEY}/${activeId}`]), query.state.data) ? POLL_MS : false),
+    retry: (count, error) => (error?.response?.status === 404 ? false : count < 2),
   });
   const candidates = useApi(candidatesUrl, {
     enabled: !!activeId,
     refetchInterval: () => (shouldPoll(client.getQueryData([`${RUNS_KEY}/${activeId}`]), client.getQueryData([jobsUrl])) ? POLL_MS : false),
+    retry: (count, error) => (error?.response?.status === 404 ? false : count < 2),
   });
+
+  // Deleted capture still in the URL/state → stop 404 polling.
+  useEffect(() => {
+    if (!activeId) return;
+    const gone =
+      run.error?.response?.status === 404 ||
+      jobs.error?.response?.status === 404 ||
+      candidates.error?.response?.status === 404;
+    if (!gone) return;
+    setSelectedRunIds((ids) => ids.filter((id) => id !== activeId));
+    openRun(null);
+    // openRun updates URL + activeId; deps intentionally omit it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, run.error, jobs.error, candidates.error]);
 
   const runData = run.data;
   const live = isRunLive(runData);
   const extracting = isRunExtracting(runData);
   const jobItems = jobs.data?.items || [];
-  const counts = detailCounts(jobItems);
   const jobsTotal = jobs.data?.total ?? jobItems.length;
   const jobsTruncated = isTruncated(jobItems.length, jobsTotal);
-  // Stop the post-request poll once the server reports nothing pending.
-  useEffect(() => {
-    if (detailsRequested.current && jobs.data && counts.pending === 0) detailsRequested.current = false;
-  });
-
   // Pending selection overrides survive background polls until the PATCH lands.
   const selectionOverrides = useRef(new Map());
   const [, setSelectionTick] = useState(0);
@@ -171,7 +182,7 @@ export default function LinkedInFinder() {
   const candidatesTruncated = isTruncated(items.length, candidatesTotal);
   const selectedIds = items.filter((candidate) => candidate.selected).map((candidate) => candidate.id);
   const selectedCount = selectedIds.length;
-  // Selection PATCHes still in flight: saving now could miss them server-side.
+  // Overrides may still be syncing — Save as group sends explicit candidate_ids, so it can stay enabled.
   const selectionPending = selectionOverrides.current.size > 0;
   const allSelected = items.length > 0 && selectedCount === items.length;
   const someSelected = selectedCount > 0 && !allSelected;
@@ -262,11 +273,7 @@ export default function LinkedInFinder() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [extracting]);
 
-  const fetchDetails = useAction(() => fetchJobDetails(activeId), 'Detail fetch requested — keep the extension open', {
-    invalidatePrefixes: [RUNS_KEY],
-    onConfirmed: () => { detailsRequested.current = true; },
-  });
-  const extract = useAction(() => extractRun(activeId), 'Emails extracted from job posts', { invalidatePrefixes: [RUNS_KEY] });
+  const extract = useAction(() => extractRun(activeId), 'Emails extracted from posts', { invalidatePrefixes: [RUNS_KEY] });
   const cancel = useAction(() => cancelRun(activeId), 'Capture cancelled — leads kept', { invalidatePrefixes: [RUNS_KEY] });
   const save = useAction(() => saveGroup(activeId, groupName.trim(), selectedIds), (data) => `Saved ${saveResultSummary(data)}`, {
     invalidatePrefixes: [RUNS_KEY, '/recipient-groups', '/recipients'],
@@ -276,22 +283,66 @@ export default function LinkedInFinder() {
       setGroupName('');
     },
   });
+  const removeRuns = useAction(
+    (ids) => (ids.length === 1 ? deleteRun(ids[0]) : deleteRuns(ids)),
+    (data) => `Deleted ${data?.deleted || 1} capture${(data?.deleted || 1) === 1 ? '' : 's'}`,
+    {
+      invalidatePrefixes: [RUNS_KEY],
+      onSuccess: (data, ids) => {
+        const removed = new Set(data?.run_ids || ids || []);
+        setSelectedRunIds((current) => current.filter((id) => !removed.has(id)));
+        if (activeId && removed.has(activeId)) {
+          selectionOverrides.current.clear();
+          setActiveId(null);
+          setSaved(null);
+        }
+        setDeleteTarget(null);
+      },
+    }
+  );
 
   const openRun = (id) => {
     selectionOverrides.current.clear();
-    detailsRequested.current = false;
-    setActiveId(id);
+    setActiveId(id || null);
     setSaved(null);
+    const next = new URLSearchParams(params);
+    if (id) next.set('run', id);
+    else next.delete('run');
+    setParams(next, { replace: true });
   };
 
-  const needsDetails = counts.pending + counts.failed;
+  // Extension "Open in Studio" deep-link: /lead-finder/linkedin?run=<id>
+  useEffect(() => {
+    const fromUrl = params.get('run');
+    if (fromUrl && fromUrl !== activeId) {
+      selectionOverrides.current.clear();
+      setActiveId(fromUrl);
+      setSaved(null);
+    }
+  }, [params, activeId]);
+
+  const toggleRunSelected = (id, checked) => {
+    setSelectedRunIds((current) => {
+      if (checked) return current.includes(id) ? current : [...current, id];
+      return current.filter((runId) => runId !== id);
+    });
+  };
+
+  const runItems = runs.data?.items || [];
+  const allRunsSelected = runItems.length > 0 && selectedRunIds.length === runItems.length;
+  const deleteIds =
+    deleteTarget === 'selected'
+      ? selectedRunIds
+      : deleteTarget?.id
+        ? [deleteTarget.id]
+        : [];
 
   return (
     <>
       <PageHeader
         eyebrow="AUDIENCE WORKSPACE"
         title="LinkedIn Search"
-        description="Capture LinkedIn Jobs with the Outreach Studio Chrome extension, pull emails from the job posts, then review and save leads as a recipient group."
+        description="Use the Chrome extension: enter keywords, Collect — it opens LinkedIn post search, auto-scrolls, and syncs public emails here. Review leads (email first) and save a recipient group."
       />
 
       <div className="lead-layout">
@@ -305,8 +356,8 @@ export default function LinkedInFinder() {
                 />
               ) : (
                 <Empty
-                  title="Capture your first LinkedIn Jobs search"
-                  description="Captures start in the Chrome extension, not here. Once a run exists, open it from Recent captures."
+                  title="Capture your first LinkedIn search"
+                  description="Captures start in the Chrome extension (keyword search → Collect), not here. Once a run exists, open it from Recent captures."
                   action={(
                     <ol className="lead-install-steps">
                       {INSTALL_STEPS.map((step) => <li key={step}>{step}</li>)}
@@ -334,13 +385,13 @@ export default function LinkedInFinder() {
                       </div>
                     )}
                     {runData.status === 'idle' && jobItems.length === 0 && (
-                      <p className="lead-warning">Waiting for jobs from the extension. Start a capture on a LinkedIn Jobs search page.</p>
+                      <p className="lead-warning">Waiting for posts from the extension. Run Collect with search keywords.</p>
                     )}
 
                     <div className="lead-toolbar">
                       <div className="lead-selection-tools">
                         <span className="selection-indicator">
-                          {showingLabel(jobItems.length, jobsTotal, 'job')} · {counts.fetched} with details{needsDetails ? ` · ${needsDetails} need details` : ''}{jobsTruncated ? ' (among shown jobs)' : ''}
+                          {showingLabel(jobItems.length, jobsTotal, 'post')}{jobsTruncated ? ' (among shown posts)' : ''}
                         </span>
                       </div>
                       <div className="lead-toolbar-actions">
@@ -349,15 +400,6 @@ export default function LinkedInFinder() {
                             <Ban size={14} /> Cancel
                           </BusyButton>
                         )}
-                        <BusyButton
-                          variant="secondary"
-                          size="sm"
-                          busy={fetchDetails.isPending}
-                          disabled={runData.status === 'cancelled' || (needsDetails === 0 && !jobsTruncated)}
-                          onClick={() => fetchDetails.mutate()}
-                        >
-                          <DownloadCloud size={14} /> Fetch job details
-                        </BusyButton>
                         <BusyButton
                           size="sm"
                           busy={extract.isPending || extracting}
@@ -372,14 +414,12 @@ export default function LinkedInFinder() {
                     <QueryState query={jobs}>
                       {() => jobItems.length ? (
                         <div className="table-scroll">
-                          <table className="lead-table" aria-label="Captured jobs">
+                          <table className="lead-table" aria-label="Captured posts">
                             <thead>
                               <tr>
-                                <th>Title</th>
-                                <th>Company</th>
-                                <th>Location</th>
-                                <th>Details</th>
-                                <th>Job</th>
+                                <th>Author</th>
+                                <th>Subtitle</th>
+                                <th>Post</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -387,12 +427,10 @@ export default function LinkedInFinder() {
                                 <tr key={job.id}>
                                   <td>{job.title || '—'}</td>
                                   <td>{job.company || '—'}</td>
-                                  <td>{job.location || '—'}</td>
-                                  <td><StatusBadge status={job.detail_status} /></td>
                                   <td>
                                     {job.job_url ? (
                                       <a className="lead-source" href={job.job_url} target="_blank" rel="noopener noreferrer">
-                                        <ExternalLink size={13} /> Open
+                                        <ExternalLink size={13} /> Open post
                                       </a>
                                     ) : <small>—</small>}
                                   </td>
@@ -402,7 +440,7 @@ export default function LinkedInFinder() {
                           </table>
                         </div>
                       ) : (
-                        <Empty title="No jobs captured yet" description="Jobs appear here as the extension captures them from LinkedIn." />
+                        <Empty title="No posts captured yet" description="Posts appear here as the extension captures them from LinkedIn." />
                       )}
                     </QueryState>
 
@@ -421,7 +459,7 @@ export default function LinkedInFinder() {
                         )}
                       </div>
                       <div className="lead-toolbar-actions">
-                        <Button size="sm" disabled={!selectedCount || selectionPending} onClick={() => setSaveOpen(true)}>
+                        <Button size="sm" disabled={!selectedCount} onClick={() => setSaveOpen(true)}>
                           <FolderPlus size={14} /> Save as group
                         </Button>
                       </div>
@@ -453,10 +491,10 @@ export default function LinkedInFinder() {
                                     onChange={(event) => toggleSelectAll(event.target.checked)}
                                   />
                                 </th>
+                                <th>Email</th>
                                 <th>Name</th>
                                 <th>Company</th>
                                 <th>Position</th>
-                                <th>Email</th>
                                 <th>Source</th>
                               </tr>
                             </thead>
@@ -476,7 +514,13 @@ export default function LinkedInFinder() {
                       ) : (
                         <Empty
                           title={extracting ? 'Extracting…' : 'No leads extracted yet'}
-                          description={extracting ? 'Leads appear here once extraction finishes.' : 'Fetch job details, then extract emails from the posts.'}
+                          description={
+                            extracting
+                              ? 'Leads appear here once extraction finishes.'
+                              : jobs.length
+                                ? `Scanned ${jobs.length} LinkedIn item(s) but no emails were found in the post text. Keep hunting posts that include an email address, then they show here like Gmail Search.`
+                                : 'Run Collect in the extension with search keywords. Emails found in posts appear in this table.'
+                          }
                         />
                       )}
                     </QueryState>
@@ -488,15 +532,57 @@ export default function LinkedInFinder() {
         </div>
 
         <aside className="panel lead-runs" aria-label="Recent captures">
-          <div className="panel-heading"><div><h2><History size={14} /> Recent captures</h2></div></div>
+          <div className="panel-heading">
+            <div><h2><History size={14} /> Recent captures</h2></div>
+          </div>
+          {runItems.length > 0 && (
+            <div className="lead-run-toolbar">
+              <label className="lead-run-select-all">
+                <input
+                  type="checkbox"
+                  checked={allRunsSelected}
+                  onChange={(event) => {
+                    setSelectedRunIds(event.target.checked ? runItems.map((item) => item.id) : []);
+                  }}
+                />
+                Select all
+              </label>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={!selectedRunIds.length || removeRuns.isPending}
+                onClick={() => setDeleteTarget('selected')}
+              >
+                <Trash2 size={13} /> Delete{selectedRunIds.length ? ` (${selectedRunIds.length})` : ''}
+              </Button>
+            </div>
+          )}
           <QueryState query={runs}>
             {(data) => data.items.length ? (
               <ul className="lead-run-list">
                 {data.items.map((item) => (
-                  <li key={item.id}>
-                    <button type="button" className={item.id === activeId ? 'active' : ''} onClick={() => openRun(item.id)}>
+                  <li key={item.id} className={item.id === activeId ? 'active' : ''}>
+                    <label className="lead-run-check">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${runTitle(item)}`}
+                        checked={selectedRunIds.includes(item.id)}
+                        onChange={(event) => toggleRunSelected(item.id, event.target.checked)}
+                      />
+                    </label>
+                    <button type="button" className="lead-run-open" onClick={() => openRun(item.id)}>
                       <strong>{runTitle(item)}</strong>
-                      <span><StatusBadge status={item.status} /><small>{item.job_count} jobs · {item.candidate_count} leads</small></span>
+                      <span><StatusBadge status={item.status} /><small>{item.job_count} posts · {item.candidate_count} leads</small></span>
+                    </button>
+                    <button
+                      type="button"
+                      className="lead-run-delete"
+                      aria-label={`Delete ${runTitle(item)}`}
+                      disabled={removeRuns.isPending}
+                      onClick={() => setDeleteTarget(item)}
+                    >
+                      <Trash2 size={14} />
                     </button>
                   </li>
                 ))}
@@ -511,21 +597,37 @@ export default function LinkedInFinder() {
         </aside>
       </div>
 
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+        title={deleteIds.length > 1 ? 'Delete selected captures' : 'Delete capture'}
+        message={
+          deleteIds.length > 1
+            ? `This permanently deletes ${deleteIds.length} captures and their posts/leads from the database. Recipient groups already saved are kept.`
+            : `This permanently deletes “${runTitle(deleteTarget !== 'selected' ? deleteTarget : null) || 'this capture'}” and its posts/leads from the database. Recipient groups already saved are kept.`
+        }
+        confirmLabel={deleteIds.length > 1 ? 'Delete selected' : 'Delete permanently'}
+        onConfirm={() => removeRuns.mutateAsync(deleteIds)}
+      />
+
       <Dialog open={saveOpen} onOpenChange={setSaveOpen} busy={save.isPending} title="Save as recipient group" description="Selected leads are added to your recipients and grouped for campaigns.">
         <form
           className="group-editor"
           onSubmit={(event) => {
             event.preventDefault();
-            if (groupName.trim() && !selectionPending) save.mutate();
+            if (groupName.trim() && selectedCount) save.mutate();
           }}
         >
           <Field label="Group name" required>
             <input autoFocus value={groupName} maxLength={200} onChange={(event) => setGroupName(event.target.value)} placeholder="e.g. Berlin backend job posters" />
           </Field>
-          <p className="lead-save-note">{selectedCount} selected lead{selectedCount === 1 ? '' : 's'} will be saved. Suppressed emails are skipped automatically.</p>
+          <p className="lead-save-note">
+            {selectedCount} selected lead{selectedCount === 1 ? '' : 's'} will be saved.
+            {selectionPending ? ' Finishing selection sync…' : ''} Suppressed emails are skipped automatically.
+          </p>
           <div className="dialog-actions">
             <Button type="button" variant="secondary" disabled={save.isPending} onClick={() => setSaveOpen(false)}>Cancel</Button>
-            <BusyButton type="submit" busy={save.isPending} disabled={!groupName.trim() || !selectedCount || selectionPending}>Save group</BusyButton>
+            <BusyButton type="submit" busy={save.isPending} disabled={!groupName.trim() || !selectedCount}>Save group</BusyButton>
           </div>
         </form>
       </Dialog>

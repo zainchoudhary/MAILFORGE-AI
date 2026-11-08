@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { parseHTML } from "linkedom";
-import { deepCapture, isBlockedPage } from "../src/lib/capture.js";
+import { deepCapture, huntLeads, isBlockedPage } from "../src/lib/capture.js";
 import { extractDetail, buildDetailJob, paneMatchesJob, acceptDetail } from "../src/lib/detail.js";
 import { clampMaxJobs, clampDeepDelay, clampDetailDelay } from "../src/lib/limits.js";
 
@@ -79,15 +79,23 @@ function fakeList(pages = Infinity) {
   assert.equal(isBlockedPage("https://www.linkedin.com/authwall?trk=x"), true);
   assert.equal(isBlockedPage("https://www.linkedin.com/uas/login-submit"), true);
   assert.equal(isBlockedPage(jobsUrl, doc("<p>ok</p>")), false, "query text is not a block");
-  // Challenge UI containers / headings on non-job pages.
+  // Challenge UI only when the page has no real feed/jobs content.
   assert.equal(isBlockedPage(jobsUrl, doc('<div id="captcha-internal"></div>')), true);
   assert.equal(isBlockedPage(jobsUrl, doc('<iframe src="https://x/captcha/y"></iframe>')), true);
   assert.equal(isBlockedPage(jobsUrl, doc("<h1>Let's do a quick security check</h1>")), true);
-  // False positives: job text mentioning these words must NOT block.
+  // False positives: real content on the page must NOT block (even if a captcha node exists).
   const jobWithWords = '<div class="jobs-description__content"><h2>Security checkpoint engineer</h2><p>Detect unusual activity, security verification, checkpoint reviews. Verify you are a human-centered thinker.</p></div>';
   assert.equal(isBlockedPage("https://www.linkedin.com/jobs/view/123/", doc(jobWithWords)), false);
   assert.equal(isBlockedPage(jobsUrl, doc("<p>Checkpoint and unusual activity detection role</p>")), false);
   assert.equal(isBlockedPage("https://www.linkedin.com/jobs/search/", doc("<p>Senior Engineer jobs in Berlin</p>")), false);
+  assert.equal(
+    isBlockedPage(
+      "https://www.linkedin.com/feed/",
+      doc('<div class="feed-shared-update-v2">Hello</div><div id="captcha-internal"></div>')
+    ),
+    false,
+    "feed with posts must not hard-stop on stray captcha nodes"
+  );
 }
 
 // 5. stalled list (nothing new) terminates even if scrolling "moves".
@@ -157,7 +165,7 @@ await assert.rejects(
 }
 
 // 10. Input clamps.
-assert.equal(clampMaxJobs(100000), 500);
+assert.equal(clampMaxJobs(100000), 5000);
 assert.equal(clampMaxJobs(0), 1);
 assert.equal(clampMaxJobs(-5), 1);
 assert.equal(clampMaxJobs("abc"), 300);
@@ -170,4 +178,85 @@ assert.equal(clampDeepDelay(2000), 2000);
 assert.equal(clampDetailDelay(1), 400);
 assert.equal(clampDetailDelay(undefined), 1200);
 
-console.log("deep capture tests passed (cap, exhausted, stop, blocked, stall, error, detail email, stale pane, clamps)");
+// Hunt stops when emailsFound hits target (not when item count hits target).
+{
+  let emails = 0;
+  let n = 0;
+  const r = await huntLeads({
+    targetEmails: 5,
+    maxItems: 100,
+    delayMs: 0,
+    sleep: noSleep,
+    parse: () => {
+      n += 1;
+      return [job(1000 + n)];
+    },
+    onBatch: async () => {
+      emails += 2;
+      return { emailsFound: emails };
+    },
+    scrollOrNextPage: async () => true,
+  });
+  assert.equal(r.reason, "target");
+  assert.equal(r.emails, 6); // 2+2+2
+  assert.ok(r.count >= 3);
+}
+
+// Hunt keeps scrolling through empty rounds until the email target is hit.
+{
+  let emails = 0;
+  let scrolls = 0;
+  let n = 0;
+  const r = await huntLeads({
+    targetEmails: 4,
+    maxItems: 200,
+    delayMs: 0,
+    sleep: noSleep,
+    parse: () => {
+      // Only reveal a new post every 5th parse — simulates slow LinkedIn lazy-load.
+      n += 1;
+      if (n % 5 !== 0) return emails ? [job(1)] : [];
+      return [job(100 + n)];
+    },
+    onBatch: async () => {
+      emails += 1;
+      return { emailsFound: emails };
+    },
+    scrollOrNextPage: async () => {
+      scrolls += 1;
+      return true;
+    },
+  });
+  assert.equal(r.reason, "target");
+  assert.equal(r.emails, 4);
+  assert.ok(scrolls > 8, "must keep scrolling while under the email target");
+}
+
+// Hunt must NOT stop on a round-count "cap" while emails are still under target
+// (regression: 8/20 with ~17 posts was stopping as "cap" after ~160 rounds).
+{
+  let emails = 0;
+  let n = 0;
+  const r = await huntLeads({
+    targetEmails: 20,
+    maxItems: 5000,
+    delayMs: 0,
+    sleep: noSleep,
+    parse: () => {
+      n += 1;
+      // New unique post only every 12 rounds — slow drip past the old 160-round limit.
+      if (n % 12 !== 0) return [];
+      return [job(5000 + n)];
+    },
+    onBatch: async () => {
+      emails += 1;
+      return { emailsFound: emails };
+    },
+    scrollOrNextPage: async () => true,
+  });
+  assert.equal(r.reason, "target");
+  assert.equal(r.emails, 20);
+  assert.ok(n > 160, "must keep going past the old round cap");
+}
+
+console.log("deep capture tests passed (cap, exhausted, stop, blocked, stall, error, detail email, stale pane, clamps, hunt target)");
