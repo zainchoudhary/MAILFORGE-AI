@@ -117,6 +117,49 @@ class LeadCandidate(Tenant, Base):
     existing_recipient_id: Mapped[str | None] = mapped_column(ForeignKey("recipients.id"))
 
 
+class LinkedInCaptureRun(Tenant, Base):
+    __tablename__ = "linkedin_capture_runs"
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    search_url: Mapped[str] = mapped_column(Text, default="")
+    search_query_snapshot: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(30), default="idle", index=True)
+    progress: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class LinkedInJobRaw(Tenant, Base):
+    __tablename__ = "linkedin_job_raw"
+    __table_args__ = (UniqueConstraint("run_id", "linkedin_job_id"),)
+    run_id: Mapped[str] = mapped_column(ForeignKey("linkedin_capture_runs.id"), index=True)
+    linkedin_job_id: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(500), default="")
+    company: Mapped[str] = mapped_column(String(300), default="")
+    location: Mapped[str] = mapped_column(String(300), default="")
+    job_url: Mapped[str] = mapped_column(Text, default="")
+    list_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    detail_payload: Mapped[dict | None] = mapped_column(JSON)
+    detail_status: Mapped[str] = mapped_column(String(30), default="pending")
+
+
+class LinkedInLeadCandidate(Tenant, Base):
+    __tablename__ = "linkedin_lead_candidates"
+    __table_args__ = (UniqueConstraint("run_id", "email"),)
+    run_id: Mapped[str] = mapped_column(ForeignKey("linkedin_capture_runs.id"), index=True)
+    job_raw_id: Mapped[str | None] = mapped_column(ForeignKey("linkedin_job_raw.id"))
+    email: Mapped[str] = mapped_column(String(320))
+    name: Mapped[str] = mapped_column(String(200), default="")
+    company: Mapped[str] = mapped_column(String(200), default="")
+    position: Mapped[str] = mapped_column(String(200), default="")
+    source_url: Mapped[str] = mapped_column(Text, default="")
+    source_title: Mapped[str] = mapped_column(String(500), default="")
+    snippet: Mapped[str] = mapped_column(Text, default="")
+    score: Mapped[float] = mapped_column(default=0)
+    signals: Mapped[dict] = mapped_column(JSON, default=dict)
+    selected: Mapped[bool] = mapped_column(Boolean, default=False)
+    existing_recipient_id: Mapped[str | None] = mapped_column(ForeignKey("recipients.id"))
+
+
 class Consent(Tenant, Base):
     __tablename__ = "recipient_consents"
     recipient_id: Mapped[str] = mapped_column(ForeignKey("recipients.id"), index=True)

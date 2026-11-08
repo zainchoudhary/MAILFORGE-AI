@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     lead_finder_fetch_timeout: int = 15
     lead_finder_max_page_bytes: int = 1500000
     lead_finder_allow_private_fetch: bool = False
+    linkedin_capture_max_jobs_per_run: int = 300
+    linkedin_capture_hard_ceiling: int = 500
 
     @model_validator(mode="after")
     def secrets(self):
