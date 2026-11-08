@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Outreach Studio Capture</title>
+    <style>
+      body { font: 13px/1.4 system-ui, sans-serif; margin: 12px; color: #172554; }
+      label { display: block; margin-top: 8px; font-weight: 600; }
+      input { width: 100%; box-sizing: border-box; padding: 6px; margin-top: 2px; }
+      button { margin-top: 10px; padding: 7px 12px; cursor: pointer; }
+      .row { display: flex; gap: 8px; }
+      #status { margin-top: 12px; min-height: 1.4em; }
+      #status.error { color: #b91c1c; }
+      #progress { margin-top: 8px; font-weight: 600; }
+      .hidden { display: none; }
+      a { color: #4f46e5; }
+    </style>
+  </head>
+  <body>
+    <h3>Outreach Studio — LinkedIn Jobs</h3>
+
+    <section id="authSection">
+      <label>API base <input id="apiBase" placeholder="http://localhost:8000" /></label>
+      <label>Studio URL <input id="studioUrl" placeholder="http://localhost:8080" /></label>
+      <label>Email <input id="email" type="email" autocomplete="username" /></label>
+      <label>Password <input id="password" type="password" autocomplete="current-password" /></label>
+      <button id="loginBtn">Login</button>
+    </section>
+
+    <section id="captureSection" class="hidden">
+      <div>Signed in as <strong id="who"></strong> <button id="logoutBtn">Logout</button></div>
+      <div class="row">
+        <button id="captureBtn">Capture visible</button>
+        <button id="newRunBtn">New run</button>
+      </div>
+      <div id="progress">Captured: 0 / 0</div>
+      <div><a id="studioLink" class="hidden" target="_blank" rel="noopener">Open Studio</a></div>
+    </section>
+
+    <div id="status"></div>
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

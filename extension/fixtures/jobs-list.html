@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+  <body>
+    <ul class="scaffold-layout__list-container">
+      <!-- Card 1: job id on the card attribute and in the link -->
+      <li class="jobs-search-results__list-item" data-occludable-job-id="3900000001">
+        <div class="job-card-container" data-job-id="urn:li:jobPosting:3900000001">
+          <a class="job-card-container__link" href="/jobs/view/3900000001/?eBP=x&amp;refId=abc">
+            Senior Backend Engineer
+          </a>
+          <div class="job-card-container__primary-description">Acme Robotics</div>
+          <ul>
+            <li class="job-card-container__metadata-item">Berlin, Germany (Hybrid)</li>
+          </ul>
+        </div>
+      </li>
+      <!-- Card 2: no data attributes; id only in slugged link URL -->
+      <li class="scaffold-layout__list-item">
+        <div class="job-card-container">
+          <a class="job-card-list__title" href="/jobs/view/data-analyst-at-globex-3900000002?trk=public">
+            Data   Analyst
+          </a>
+          <div class="job-card-container__company-name"> Globex  Corp </div>
+          <ul>
+            <li class="job-card-container__metadata-item">Remote</li>
+          </ul>
+        </div>
+      </li>
+      <!-- Promoted/ad item with no job id: must be skipped -->
+      <li class="scaffold-layout__list-item">
+        <div class="ad-banner">Promoted: try Premium</div>
+      </li>
+      <!-- Duplicate of card 1 (virtualized list re-render): must be de-duplicated -->
+      <li class="jobs-search-results__list-item" data-occludable-job-id="3900000001">
+        <a class="job-card-container__link" href="/jobs/view/3900000001/">Senior Backend Engineer</a>
+      </li>
+    </ul>
+  </body>
+</html>
