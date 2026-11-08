@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { canCancelRun, detailCounts, isRunLive, progressLine, runTitle, saveResultSummary } from './linkedinCapture';
+import { describe, expect, it, vi } from 'vitest';
+import { api } from './api';
+import { canCancelRun, detailCounts, hasPendingDetails, isRunLive, setCandidatesSelected, progressLine, runTitle, saveResultSummary } from './linkedinCapture';
 
 describe('linkedinCapture helpers', () => {
   it('detects live and cancellable runs', () => {
@@ -25,5 +26,21 @@ describe('linkedinCapture helpers', () => {
 
   it('summarises a save-group result', () => {
     expect(saveResultSummary({ group_name: 'A', recipient_count: 1, created: 1 })).toBe('1 recipient in “A” (1 new)');
+  });
+
+  it('detects pending job details', () => {
+    expect(hasPendingDetails([{ detail_status: 'fetched' }, { detail_status: 'pending' }])).toBe(true);
+    expect(hasPendingDetails([{ detail_status: 'fetched' }, { detail_status: 'failed' }])).toBe(false);
+    expect(hasPendingDetails(undefined)).toBe(false);
+  });
+
+  it('reports partial failures from bulk selection without throwing', async () => {
+    const patch = vi.spyOn(api, 'patch')
+      .mockResolvedValueOnce({ data: {} })
+      .mockRejectedValueOnce(new Error('boom'));
+    const result = await setCandidatesSelected(1, [{ id: 1, selected: false }, { id: 2, selected: false }, { id: 3, selected: true }], true);
+    expect(patch).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ updated: 1, failed: 1 });
+    patch.mockRestore();
   });
 });

@@ -13,6 +13,7 @@ import {
   detailCounts,
   extractRun,
   fetchJobDetails,
+  hasPendingDetails,
   isRunExtracting,
   isRunLive,
   patchCandidate,
@@ -27,6 +28,7 @@ import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 
 const POLL_MS = 3000;
+const RUNS_IDLE_POLL_MS = 15000;
 
 const StatusBadge = ({ status }) => <Status value={status} />;
 
@@ -109,20 +111,34 @@ export default function LinkedInFinder() {
   const [groupName, setGroupName] = useState('');
   const [saved, setSaved] = useState(null);
 
-  const runs = useApi(RUNS_KEY, { refetchInterval: (query) => (query.state.data?.items?.some(isRunExtracting) ? POLL_MS : false) });
+  // Jobs keep changing after the run leaves idle/extracting: the extension fills in details
+  // for pending jobs, and a fetch-details request may not have flipped statuses yet.
+  const detailsRequested = useRef(false);
+  const jobsUrl = `${RUNS_KEY}/${activeId}/jobs?limit=200`;
+  const candidatesUrl = `${RUNS_KEY}/${activeId}/candidates?limit=200`;
+  const shouldPoll = (runValue, jobsValue) =>
+    isRunLive(runValue) || hasPendingDetails(jobsValue?.items) || detailsRequested.current;
+
+  const runs = useApi(RUNS_KEY, {
+    refetchInterval: (query) => {
+      const items = query.state.data?.items;
+      if (items?.some(isRunExtracting)) return POLL_MS;
+      if (activeId) return shouldPoll(client.getQueryData([`${RUNS_KEY}/${activeId}`]), client.getQueryData([jobsUrl])) ? POLL_MS : false;
+      // Empty state: light poll so captures started in the extension show up.
+      return RUNS_IDLE_POLL_MS;
+    },
+  });
   const run = useApi(`${RUNS_KEY}/${activeId}`, {
     enabled: !!activeId,
-    refetchInterval: (query) => (isRunLive(query.state.data) ? POLL_MS : false),
+    refetchInterval: (query) => (shouldPoll(query.state.data, client.getQueryData([jobsUrl])) ? POLL_MS : false),
   });
-  const jobsUrl = `${RUNS_KEY}/${activeId}/jobs?limit=200`;
   const jobs = useApi(jobsUrl, {
     enabled: !!activeId,
-    refetchInterval: () => (isRunLive(run.data) ? POLL_MS : false),
+    refetchInterval: (query) => (shouldPoll(client.getQueryData([`${RUNS_KEY}/${activeId}`]), query.state.data) ? POLL_MS : false),
   });
-  const candidatesUrl = `${RUNS_KEY}/${activeId}/candidates?limit=200`;
   const candidates = useApi(candidatesUrl, {
     enabled: !!activeId,
-    refetchInterval: () => (isRunLive(run.data) ? POLL_MS : false),
+    refetchInterval: () => (shouldPoll(client.getQueryData([`${RUNS_KEY}/${activeId}`]), client.getQueryData([jobsUrl])) ? POLL_MS : false),
   });
 
   const runData = run.data;
@@ -130,6 +146,10 @@ export default function LinkedInFinder() {
   const extracting = isRunExtracting(runData);
   const jobItems = jobs.data?.items || [];
   const counts = detailCounts(jobItems);
+  // Stop the post-request poll once the server reports nothing pending.
+  useEffect(() => {
+    if (detailsRequested.current && jobs.data && counts.pending === 0) detailsRequested.current = false;
+  });
 
   // Pending selection overrides survive background polls until the PATCH lands.
   const selectionOverrides = useRef(new Map());
@@ -142,7 +162,10 @@ export default function LinkedInFinder() {
           : candidate
       )
     : rawItems;
-  const selectedCount = items.filter((candidate) => candidate.selected).length;
+  const selectedIds = items.filter((candidate) => candidate.selected).map((candidate) => candidate.id);
+  const selectedCount = selectedIds.length;
+  // Selection PATCHes still in flight: saving now could miss them server-side.
+  const selectionPending = selectionOverrides.current.size > 0;
   const allSelected = items.length > 0 && selectedCount === items.length;
   const someSelected = selectedCount > 0 && !allSelected;
   const refreshRunViews = () => client.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === 'string' && query.queryKey[0].startsWith(RUNS_KEY) });
@@ -175,27 +198,47 @@ export default function LinkedInFinder() {
     });
     setSelectionTick((tick) => tick + 1);
 
+    const resync = (error, failed, total) => {
+      for (const id of ids) selectionOverrides.current.delete(id);
+      setSelectionTick((tick) => tick + 1);
+      void client.invalidateQueries({ queryKey: [candidatesUrl], refetchType: 'active' });
+      void client.invalidateQueries({ queryKey: [RUNS_KEY], refetchType: 'active' });
+      toast.error(`${failed} of ${total} updates failed — refreshed from server. ${errorText(error)}`);
+    };
+    const rollback = (error) => {
+      for (const id of ids) selectionOverrides.current.delete(id);
+      client.setQueriesData({ queryKey: [candidatesUrl] }, (current) => {
+        if (!current?.items) return current;
+        return {
+          ...current,
+          items: current.items.map((candidate) =>
+            previous.has(candidate.id) ? { ...candidate, selected: previous.get(candidate.id) } : candidate
+          ),
+        };
+      });
+      setSelectionTick((tick) => tick + 1);
+      toast.error(errorText(error));
+      void client.invalidateQueries({ queryKey: [candidatesUrl], refetchType: 'active' });
+    };
+
     void (async () => {
       try {
         if (targets.length === 1) await patchCandidate(activeId, targets[0].id, { selected });
-        else await setCandidatesSelected(activeId, targets, selected);
+        else {
+          const result = await setCandidatesSelected(activeId, targets, selected);
+          if (result.failed) {
+            // Server is now mixed: trust it rather than rolling back the whole UI.
+            resync(result.errors[0], result.failed, targets.length);
+            return;
+          }
+        }
         for (const id of ids) {
           if (selectionOverrides.current.get(id) === selected) selectionOverrides.current.delete(id);
         }
         setSelectionTick((tick) => tick + 1);
       } catch (error) {
-        for (const id of ids) selectionOverrides.current.delete(id);
-        client.setQueriesData({ queryKey: [candidatesUrl] }, (current) => {
-          if (!current?.items) return current;
-          return {
-            ...current,
-            items: current.items.map((candidate) =>
-              previous.has(candidate.id) ? { ...candidate, selected: previous.get(candidate.id) } : candidate
-            ),
-          };
-        });
-        setSelectionTick((tick) => tick + 1);
-        toast.error(errorText(error));
+        // Single PATCH failed; the server still has the old value.
+        rollback(error);
       }
     })();
   };
@@ -212,10 +255,13 @@ export default function LinkedInFinder() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [extracting]);
 
-  const fetchDetails = useAction(() => fetchJobDetails(activeId), 'Detail fetch requested — keep the extension open', { invalidatePrefixes: [RUNS_KEY] });
+  const fetchDetails = useAction(() => fetchJobDetails(activeId), 'Detail fetch requested — keep the extension open', {
+    invalidatePrefixes: [RUNS_KEY],
+    onConfirmed: () => { detailsRequested.current = true; },
+  });
   const extract = useAction(() => extractRun(activeId), 'Emails extracted from job posts', { invalidatePrefixes: [RUNS_KEY] });
   const cancel = useAction(() => cancelRun(activeId), 'Capture cancelled — leads kept', { invalidatePrefixes: [RUNS_KEY] });
-  const save = useAction(() => saveGroup(activeId, groupName.trim()), (data) => `Saved ${saveResultSummary(data)}`, {
+  const save = useAction(() => saveGroup(activeId, groupName.trim(), selectedIds), (data) => `Saved ${saveResultSummary(data)}`, {
     invalidatePrefixes: [RUNS_KEY, '/recipient-groups', '/recipients'],
     onSuccess: (data) => {
       setSaved(data);
@@ -226,6 +272,7 @@ export default function LinkedInFinder() {
 
   const openRun = (id) => {
     selectionOverrides.current.clear();
+    detailsRequested.current = false;
     setActiveId(id);
     setSaved(null);
   };
@@ -244,15 +291,22 @@ export default function LinkedInFinder() {
         <div className="lead-main">
           {!activeId ? (
             <section className="panel">
-              <Empty
-                title="Capture your first LinkedIn Jobs search"
-                description="Captures start in the Chrome extension, not here. Once a run exists, open it from Recent captures."
-                action={(
-                  <ol className="lead-install-steps">
-                    {INSTALL_STEPS.map((step) => <li key={step}>{step}</li>)}
-                  </ol>
-                )}
-              />
+              {runs.data?.items?.length ? (
+                <Empty
+                  title="Select a capture to review"
+                  description="Open a run from Recent captures to see its jobs and leads. New captures from the extension appear there automatically."
+                />
+              ) : (
+                <Empty
+                  title="Capture your first LinkedIn Jobs search"
+                  description="Captures start in the Chrome extension, not here. Once a run exists, open it from Recent captures."
+                  action={(
+                    <ol className="lead-install-steps">
+                      {INSTALL_STEPS.map((step) => <li key={step}>{step}</li>)}
+                    </ol>
+                  )}
+                />
+              )}
             </section>
           ) : (
             <section className="panel">
@@ -360,7 +414,7 @@ export default function LinkedInFinder() {
                         )}
                       </div>
                       <div className="lead-toolbar-actions">
-                        <Button size="sm" disabled={!selectedCount} onClick={() => setSaveOpen(true)}>
+                        <Button size="sm" disabled={!selectedCount || selectionPending} onClick={() => setSaveOpen(true)}>
                           <FolderPlus size={14} /> Save as group
                         </Button>
                       </div>
@@ -455,7 +509,7 @@ export default function LinkedInFinder() {
           className="group-editor"
           onSubmit={(event) => {
             event.preventDefault();
-            if (groupName.trim()) save.mutate();
+            if (groupName.trim() && !selectionPending) save.mutate();
           }}
         >
           <Field label="Group name" required>
@@ -464,7 +518,7 @@ export default function LinkedInFinder() {
           <p className="lead-save-note">{selectedCount} selected lead{selectedCount === 1 ? '' : 's'} will be saved. Suppressed emails are skipped automatically.</p>
           <div className="dialog-actions">
             <Button type="button" variant="secondary" disabled={save.isPending} onClick={() => setSaveOpen(false)}>Cancel</Button>
-            <BusyButton type="submit" busy={save.isPending} disabled={!groupName.trim() || !selectedCount}>Save group</BusyButton>
+            <BusyButton type="submit" busy={save.isPending} disabled={!groupName.trim() || !selectedCount || selectionPending}>Save group</BusyButton>
           </div>
         </form>
       </Dialog>

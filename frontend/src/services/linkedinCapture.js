@@ -7,6 +7,8 @@ export const CAPTURE_RUNS_KEY = `${BASE}/runs`;
 /** Runs that can still change on their own (extension adding jobs, extraction in flight). */
 export const LIVE_STATUSES = ['idle', 'extracting'];
 export const isRunLive = (run) => !!run && LIVE_STATUSES.includes(run.status);
+/** True while any job still awaits details from the extension. */
+export const hasPendingDetails = (jobs) => (jobs || []).some((job) => (job.detail_status || 'pending') === 'pending');
 export const isRunExtracting = (run) => run?.status === 'extracting';
 export const canCancelRun = (run) => !!run && ['idle', 'extracting', 'ready'].includes(run.status);
 
@@ -72,12 +74,17 @@ export const listCandidates = async (runId, { page = 1, limit = 100 } = {}) =>
 export const patchCandidate = async (runId, candidateId, changes) =>
   (await api.patch(`${BASE}/runs/${runId}/candidates/${candidateId}`, changes)).data;
 
-/** Toggle selection for many candidates (Select all / Clear); API has no bulk endpoint. */
+/**
+ * Toggle selection for many candidates (Select all / Clear); API has no bulk endpoint.
+ * Uses allSettled so a partial failure never leaves requests in flight; callers should
+ * refetch from the server when `failed > 0`.
+ */
 export const setCandidatesSelected = async (runId, candidates, selected) => {
   const targets = (candidates || []).filter((candidate) => !!candidate.selected !== !!selected);
-  if (!targets.length) return { updated: 0, selected };
-  await Promise.all(targets.map((candidate) => patchCandidate(runId, candidate.id, { selected })));
-  return { updated: targets.length, selected };
+  if (!targets.length) return { updated: 0, failed: 0, selected, errors: [] };
+  const results = await Promise.allSettled(targets.map((candidate) => patchCandidate(runId, candidate.id, { selected })));
+  const errors = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
+  return { updated: results.length - errors.length, failed: errors.length, selected, errors };
 };
 
 export const fetchJobDetails = async (runId, jobIds) =>
