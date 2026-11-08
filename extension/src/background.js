@@ -22,6 +22,11 @@ const enqueue = (fn) => {
   return p;
 };
 
+// Same storage wipe RESET_RUN uses — also called on LOGIN / LOGOUT / apiBase change.
+async function resetRun() {
+  await chrome.storage.local.remove("capture");
+}
+
 async function setCapture(patch) {
   const { capture = {} } = await chrome.storage.local.get("capture");
   const next = { ...capture, ...patch };
@@ -83,10 +88,12 @@ const handlers = {
       access_token: t.access_token,
       refresh_token: t.refresh_token,
     });
+    await resetRun();
     return { ok: true };
   },
   async LOGOUT() {
     await logout();
+    await resetRun();
     return { ok: true };
   },
   async GET_STATE() {
@@ -102,6 +109,12 @@ const handlers = {
     };
   },
   async SAVE_SETTINGS({ settings }) {
+    if (settings && Object.prototype.hasOwnProperty.call(settings, "apiBase")) {
+      const current = await getSettings();
+      if (normalizeBase(settings.apiBase) !== normalizeBase(current.apiBase)) {
+        await resetRun();
+      }
+    }
     await saveSettings(settings);
     return { ok: true };
   },
@@ -121,7 +134,7 @@ const handlers = {
       }
     }),
   async RESET_RUN() {
-    await chrome.storage.local.remove("capture");
+    await resetRun();
     return { ok: true };
   },
   // Task 6 stubs: deep capture / detail fetch not implemented yet.
@@ -129,6 +142,8 @@ const handlers = {
     return { ok: false, error: "Deep capture is not implemented yet (Task 6)" };
   },
 };
+
+export { handlers };
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   const handler = msg && handlers[msg.type];

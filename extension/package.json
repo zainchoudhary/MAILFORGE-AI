@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node scripts/test_parsers.mjs"
+    "test": "node scripts/test_parsers.mjs && node scripts/test_auth.mjs"
   },
   "devDependencies": {
     "linkedom": "^0.18.5"

@@ -55,8 +55,12 @@ export async function refreshTokens() {
       body: JSON.stringify({ refresh_token }),
     });
     if (!res.ok) {
-      await logout();
-      throw new Error("Session expired — sign in again");
+      // Only drop the session on auth rejection — 5xx must not force a re-login.
+      if (res.status === 400 || res.status === 401 || res.status === 403) {
+        await logout();
+        throw new Error("Session expired — sign in again");
+      }
+      throw new Error(await errorText(res));
     }
     const t = await res.json();
     await saveSettings({
