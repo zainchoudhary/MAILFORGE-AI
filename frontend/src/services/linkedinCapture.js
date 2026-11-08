@@ -13,11 +13,10 @@ export const isRunExtracting = (run) => run?.status === 'extracting';
 export const canCancelRun = (run) => !!run && ['idle', 'extracting', 'ready'].includes(run.status);
 
 export const INSTALL_STEPS = [
-  'Install the MailForge LinkedIn Jobs extension in Chrome (load the unpacked “extension” folder via chrome://extensions).',
-  'Sign in from the extension popup with your MailForge account.',
-  'Open a LinkedIn Jobs search and start a capture from the extension. Jobs stream into this page.',
-  'Fetch job details for the jobs you care about, then extract emails found in the posts.',
-  'Review the leads and save them as a recipient group.',
+  'Install the MailForge LinkedIn Jobs extension in Chrome (chrome://extensions → Load unpacked → select the “extension” folder).',
+  'Set API base to the backend and sign in from the extension side panel with your MailForge account.',
+  'Open a LinkedIn Jobs search and use Capture visible, Deep capture, or Fetch details. Jobs stream into this page.',
+  'Emails are extracted only if they appear on the job post. Review leads here, then save them as a recipient group.',
 ];
 
 export const runTitle = (run) => {

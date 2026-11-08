@@ -54,6 +54,8 @@ Or set `AI_PROVIDER=gemini`, `GOOGLE_API_KEY`, and `GEMINI_MODEL` to a model ava
 
 Lead Finder uses `LEAD_SEARCH_PROVIDER` plus `SERPER_API_KEY`, or `GOOGLE_CSE_API_KEY` and `GOOGLE_CSE_CX`. Set `LEAD_SEARCH_PROVIDER` to `serper` or `google_cse`. `LEAD_FINDER_MAX_PER_RUN` (default 100) caps a run; `LEAD_FINDER_FIRST_BATCH` (default 20) is the first preview batch. A Celery worker continues later batches. Candidates stay in human review until someone saves a recipient group. Search does not invent email addresses.
 
+LinkedIn Jobs capture uses the Chrome extension in `extension/` and does not need Lead Finder search keys. `LINKEDIN_CAPTURE_MAX_JOBS_PER_RUN` (default 300) caps a run; `LINKEDIN_CAPTURE_HARD_CEILING` (500) is the absolute maximum. Emails come only from text on the captured job post. Set the extension **API base** in the side panel (local default `http://localhost:8000`).
+
 Without an API key, AI generation returns an explicit configuration error and records the failed agent execution. It does not fabricate generated copy. Document extraction, drafting, templates, recipient review, analytics, and safe dry runs work independently of an LLM key. Requested email content and selected campaign context are sent to the configured AI provider; raw uploaded documents are parsed locally for deterministic extraction. Lead Finder search stays disabled until its provider key is set and returns a configuration error instead of fabricated contacts.
 
 ## Your first workflow
@@ -75,6 +77,7 @@ Without an API key, AI generation returns an explicit configuration error and re
 - Overview dashboard, charts, real metrics, and empty/error/loading states.
 - AI Agent Studio with bounded planning, composition, document-extraction requests, actual failure context, prepared drafts, and execution logs. The LLM cannot approve campaigns or execute arbitrary tools.
 - Lead Finder: natural-language recruiter search over public web results, editable candidates, and human review before saving a recipient group. Later batches run on the Celery worker.
+- LinkedIn Search: Chrome extension captures LinkedIn Jobs into a review page; emails only if present on the job post; save as a recipient group.
 - Rich email composer, CC/BCC, personalization, drafts, previews, attachments, templates, and schedules.
 - Private document library, extraction review table, cross-document recipient deduplication, PDF/image/text previews, authenticated downloads.
 - Campaign editing before delivery, duplication, recipient-template assignment, review/dry-run/approval, pause/resume/cancel, eligible failure retries, CSV reports.
@@ -129,6 +132,7 @@ frontend/
     styles/               Navy/cyan design system and responsive layouts
 scripts/                  Environment generation and HTTP smoke verification
 docs/                     Architecture, deployment, API and verification guides
+extension/                Chrome MV3 LinkedIn Jobs capture (load unpacked)
 ```
 
 ## Local development
@@ -184,6 +188,7 @@ cd backend
 ```bash
 npm test --prefix frontend
 npm run build --prefix frontend
+npm test --prefix extension
 ```
 
 With the local API and Celery worker running:
@@ -195,3 +200,14 @@ backend/.venv/bin/python scripts/smoke_test.py
 The smoke test registers an isolated synthetic workspace, performs real queued extraction, reviews a campaign, confirms zero sends, and asserts that dry-run blocks production approval. It stores its generated test credentials privately under ignored `.local/` without printing them.
 
 See [verification results](docs/VERIFICATION.md) for exactly what was exercised and environmental limitations. See [deployment](docs/DEPLOYMENT.md), [architecture](docs/ARCHITECTURE.md), and [API guide](docs/API.md) for operation and extension details.
+
+## LinkedIn Jobs capture
+
+Capture LinkedIn Jobs search results into Outreach Studio. Emails are extracted only if they appear on the job post. LinkedIn DOM changes can break capture; selectors live in `extension/src/lib/selectors.js`.
+
+1. Chrome → `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `extension/`.
+2. Open the **side panel**, set **API base** to the backend (`http://localhost:8000` locally), and sign in.
+3. On a LinkedIn Jobs search, use **Capture visible**, **Deep capture**, or **Fetch details**.
+4. Review in Studio **LinkedIn Search**, then **Save group**.
+
+See [extension/README.md](extension/README.md) for permissions, Studio URL, and tests.

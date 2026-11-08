@@ -370,6 +370,21 @@ Example:
 
 ---
 
+## 15. LinkedIn Search
+
+**Yahan LinkedIn Jobs se emails nikalte hain.**
+
+Chrome extension Jobs search capture karti hai. Email tabhi milti hai jab woh job post par likhi ho.
+
+1. Chrome → Extensions → Developer mode on karein → **Load unpacked** → `extension/` folder select karein.
+2. Side panel kholen, **API base** backend par set karein (`http://localhost:8000`), sign in karein.
+3. LinkedIn Jobs search kholen. **Capture visible**, **Deep capture**, ya **Fetch details** use karein.
+4. Studio **LinkedIn Search** par review karein, phir **Save group**.
+
+LinkedIn page layout change ho to capture toot sakti hai. Selectors `extension/src/lib/selectors.js` mein hain.
+
+---
+
 # Aapka pehla practical example
 
 Maan lein aapke paas Excel file hai jisme clients ke emails hain.
@@ -417,6 +432,7 @@ Abhi website safe testing mode mein hai, isliye real email send nahi hogi. Ye ac
 | Aap kya karna chahte hain? | Kaunsa page use karein? |
 |---|---|
 | File se emails nikalni hain | Document Intelligence |
+| LinkedIn Jobs se emails nikalni hain | LinkedIn Search + Chrome extension |
 | Contacts manage karne hain | Recipients |
 | Email likhni hai | Compose Email |
 | AI se help leni hai | AI Agent Studio |
