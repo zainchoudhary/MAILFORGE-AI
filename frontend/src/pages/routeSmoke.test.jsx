@@ -36,3 +36,12 @@ describe('campaign and attachment routes', () => {
     expect(await screen.findByText('Partial campaign')).toBeInTheDocument();
   });
 });
+
+describe('LinkedIn search route', () => {
+  it('shows capture instructions when there are no runs', async () => {
+    const { default: LinkedInFinder } = await import('./LinkedInFinder');
+    renderRoute(<LinkedInFinder />);
+    expect(await screen.findByText('Capture your first LinkedIn Jobs search')).toBeInTheDocument();
+    expect(await screen.findByText('No captures yet.')).toBeInTheDocument();
+  });
+});
