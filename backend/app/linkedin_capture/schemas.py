@@ -1,5 +1,7 @@
 """Pydantic request bodies for LinkedIn capture (service accepts plain dicts; routers validate with these)."""
 
+import re
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DETAIL_STATUSES = ("pending", "fetched", "failed", "skipped")
@@ -51,6 +53,17 @@ class CaptureCandidatePatch(_Input):
     company: str | None = Field(default=None, max_length=200)
     position: str | None = Field(default=None, max_length=200)
     selected: bool | None = None
+
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, value):
+        if value is None:
+            return value
+        # Syntax-only check: extracted leads may use reserved/special-use domains (e.g. .test).
+        value = value.strip().lower()
+        if not re.fullmatch(r"[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;.]{2,}", value):
+            raise ValueError("Enter a valid email address")
+        return value
 
 
 class CaptureSaveGroupInput(_Input):

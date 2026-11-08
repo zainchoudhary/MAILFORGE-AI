@@ -459,7 +459,9 @@ def patch_candidate(db: Session, user, run_id: str, candidate_id: str, changes: 
         if field in changes:
             changes[field] = (changes[field] or "").strip()
     if "email" in changes:
-        email = normalize_email(changes["email"])
+        email = normalize_email(changes["email"] or "")
+        if not email or "@" not in email:
+            raise HTTPException(422, "Enter a valid email address")
         changes["email"] = email
         if email != candidate.email:
             if db.scalar(

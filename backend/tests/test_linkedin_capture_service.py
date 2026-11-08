@@ -1,6 +1,9 @@
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import select
+
+from app.linkedin_capture.schemas import CaptureCandidatePatch
 
 from app.core.config import get_settings
 from app.linkedin_capture import service
@@ -72,3 +75,25 @@ def test_suppressed_skipped_and_save_group(user, db):
     with pytest.raises(HTTPException) as exc:
         service.save_group(db, user, run.id, "LI group", [cands[0].id])
     assert exc.value.status_code == 409
+
+
+def test_capture_candidate_patch_schema_rejects_bad_email():
+    with pytest.raises(ValidationError):
+        CaptureCandidatePatch(email="nope")
+    with pytest.raises(ValidationError):
+        CaptureCandidatePatch(email="")
+    patch = CaptureCandidatePatch(email=" Jane@Acme.TEST ")
+    assert patch.email == "jane@acme.test"
+
+
+def test_patch_candidate_rejects_bad_email(user, db):
+    run = service.create_run(db, user)
+    service.upsert_jobs_batch(
+        db, user, run.id, [_job("1", detail_payload={"d": "Contact jane.doe@acme-corp.com"})]
+    )
+    cand = db.scalars(select(LinkedInLeadCandidate)).first()
+    with pytest.raises(HTTPException) as exc:
+        service.patch_candidate(db, user, run.id, cand.id, {"email": "nope"})
+    assert exc.value.status_code == 422
+    db.refresh(cand)
+    assert cand.email == "jane.doe@acme-corp.com"
