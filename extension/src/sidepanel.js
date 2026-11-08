@@ -15,6 +15,14 @@ function setStatus(text, isError = false) {
 
 function renderCapture(capture = {}, studioUrl) {
   $("progress").textContent = `Captured: ${capture.sent || 0} / ${capture.total || 0}`;
+  const dTotal = capture.detailTotal || 0;
+  $("detailProgress").textContent = dTotal ? `Details: ${capture.detailSent || 0} / ${dTotal}` : "";
+  const busy = ["deep_capturing", "fetching_details"].includes(capture.status);
+  for (const id of ["captureBtn", "deepBtn", "detailsBtn"]) $(id).disabled = busy;
+  if (capture.status === "deep_capturing") setStatus("Deep capture running… (keep this tab open)");
+  else if (capture.status === "fetching_details") setStatus("Fetching details…");
+  else if (capture.status === "blocked") setStatus(capture.error, true);
+  else if (capture.status === "done" && capture.stopReason) setStatus(`Finished (${capture.stopReason}).`);
   const link = $("studioLink");
   if (capture.runId) {
     link.href = studioRunUrl(studioUrl || $("studioUrl").value, capture.runId);
@@ -74,6 +82,38 @@ $("captureBtn").addEventListener("click", async () => {
     setStatus(e.message, true);
   } finally {
     $("captureBtn").disabled = false;
+  }
+});
+
+$("deepBtn").addEventListener("click", async () => {
+  try {
+    setStatus("Starting deep capture…");
+    await send({
+      type: "DEEP_CAPTURE",
+      maxJobs: Number($("maxJobs").value) || 300,
+      delayMs: Number($("delayMs").value) || 800,
+    });
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+});
+
+$("stopBtn").addEventListener("click", async () => {
+  try {
+    await send({ type: "STOP" });
+    setStatus("Stopping…");
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+});
+
+$("detailsBtn").addEventListener("click", async () => {
+  try {
+    const jobIds = $("detailIds").value.split(/[\s,]+/).filter(Boolean);
+    setStatus("Starting detail fetch…");
+    await send({ type: "FETCH_DETAILS", jobIds });
+  } catch (e) {
+    setStatus(e.message, true);
   }
 });
 

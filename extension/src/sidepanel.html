@@ -33,7 +33,20 @@
         <button id="captureBtn">Capture visible</button>
         <button id="newRunBtn">New run</button>
       </div>
+      <div class="row">
+        <label style="flex:1">Max jobs <input id="maxJobs" type="number" min="1" max="500" value="300" /></label>
+        <label style="flex:1">Delay (ms) <input id="delayMs" type="number" min="200" value="800" /></label>
+      </div>
+      <div class="row">
+        <button id="deepBtn">Deep capture</button>
+        <button id="stopBtn">Stop</button>
+      </div>
+      <label>Job IDs for details (optional, comma-separated)
+        <input id="detailIds" placeholder="blank = all pending" />
+      </label>
+      <button id="detailsBtn">Fetch details</button>
       <div id="progress">Captured: 0 / 0</div>
+      <div id="detailProgress"></div>
       <div><a id="studioLink" class="hidden" target="_blank" rel="noopener">Open Studio</a></div>
     </section>
 

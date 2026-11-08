@@ -11,3 +11,21 @@ export const SELECTORS = {
 
 export const JOB_ID_FROM_URL = /\/jobs\/view\/(?:[^/?#]*-)?(\d+)/;
 export const JOB_ID_FROM_QUERY = /[?&]currentJobId=(\d+)/;
+
+// --- Task 6: deep capture + detail pane ---
+export const DETAIL_SELECTORS = {
+  // Job description body (first match wins, in document order of preference).
+  description: ".jobs-description__content, .jobs-box__html-content, .jobs-description-content__text, #job-details",
+  // Whole right-hand detail pane (used for raw_text).
+  pane: ".jobs-search__job-details--container, .scaffold-layout__detail, .job-view-layout",
+  // "See more" toggle that truncates long descriptions.
+  seeMore: "button.jobs-description__footer-button, button[aria-label='Click to see more description']",
+  mailto: "a[href^='mailto:']",
+  // Left-hand list scroller and pagination.
+  listScroller: ".jobs-search-results-list, .scaffold-layout__list > div, .scaffold-layout__list",
+  nextPage: "button.jobs-search-pagination__button--next, button[aria-label='View next page']",
+};
+
+// CAPTCHA / checkpoint heuristics.
+export const BLOCK_URL = /\/(checkpoint|authwall|uas\/login-submit|challenge)\b/i;
+export const BLOCK_TEXT = /checkpoint|unusual activity|security verification|let'?s do a quick security check|verify (that )?you'?re (not )?a (robot|human)/i;

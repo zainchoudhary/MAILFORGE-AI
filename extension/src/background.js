@@ -7,6 +7,8 @@ import {
   createRun,
   batchJobs,
 } from "./lib/api.js";
+import { buildDetailJob } from "./lib/detail.js";
+import { sleep } from "./lib/capture.js";
 
 const BATCH_SIZE = 100;
 
@@ -43,39 +45,127 @@ async function activeLinkedInTab() {
   return tab;
 }
 
-async function captureVisible() {
-  const tab = await activeLinkedInTab();
-  let res;
+async function sendToTab(tabId, message) {
   try {
-    res = await chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_VISIBLE" });
+    return await chrome.tabs.sendMessage(tabId, message);
   } catch {
     // Tab was open before the extension loaded: inject the content script once.
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["src/content/jobs.js"] });
-    res = await chrome.tabs.sendMessage(tab.id, { type: "CAPTURE_VISIBLE" });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["src/content/jobs.js"] });
+    return chrome.tabs.sendMessage(tabId, message);
   }
+}
+
+async function captureVisible() {
+  const tab = await activeLinkedInTab();
+  const res = await sendToTab(tab.id, { type: "CAPTURE_VISIBLE" });
   if (!res || !res.ok) throw new Error((res && res.error) || "Capture failed");
   return res; // { jobs, search_url }
+}
+
+async function ensureRun({ newRun = false, search_url = "" } = {}) {
+  let { capture = {} } = await chrome.storage.local.get("capture");
+  if (newRun || !capture.runId) {
+    await setCapture({ status: "creating_run", total: 0, sent: 0, jobIds: [], detailDone: [], error: "" });
+    const run = await createRun({ search_url, search_query_snapshot: search_url });
+    capture = await setCapture({ runId: run.id, total: 0, sent: 0 });
+  }
+  return capture;
+}
+
+// Upload list jobs in chunks, tracking totals and captured ids (for later detail fetch).
+async function uploadJobs(runId, jobs) {
+  let { capture = {} } = await chrome.storage.local.get("capture");
+  await setCapture({ status: "uploading", total: (capture.total || 0) + jobs.length, error: "" });
+  let sent = capture.sent || 0;
+  const ids = new Set(capture.jobIds || []);
+  for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
+    const chunk = jobs.slice(i, i + BATCH_SIZE);
+    await batchJobs(runId, chunk, true);
+    sent += chunk.length;
+    chunk.forEach((j) => ids.add(j.linkedin_job_id));
+    await setCapture({ sent, jobIds: [...ids] });
+  }
 }
 
 async function startRun({ newRun = false } = {}) {
   const { jobs, search_url } = await captureVisible();
   if (!jobs.length) throw new Error("No job cards found on this page");
-  let { capture = {} } = await chrome.storage.local.get("capture");
-  if (newRun || !capture.runId) {
-    await setCapture({ status: "creating_run", total: 0, sent: 0, error: "" });
-    const run = await createRun({ search_url, search_query_snapshot: search_url });
-    capture = await setCapture({ runId: run.id, total: 0, sent: 0 });
+  const capture = await ensureRun({ newRun, search_url });
+  await uploadJobs(capture.runId, jobs);
+  return setCapture({ status: "done" });
+}
+
+// ---- Deep capture + detail fetch (Task 6) ----
+let deep = { tabId: null };
+let detailRunning = false;
+let stopRequested = false;
+
+function assertIdle() {
+  if (deep.tabId !== null || detailRunning) throw new Error("A deep capture or detail fetch is already running");
+}
+
+async function startDeepCapture({ maxJobs = 300, delayMs = 800 } = {}) {
+  assertIdle();
+  const tab = await activeLinkedInTab();
+  const capture = await ensureRun({ search_url: tab.url });
+  stopRequested = false;
+  const res = await sendToTab(tab.id, { type: "DEEP_START", maxJobs: Number(maxJobs) || 300, delayMs: Number(delayMs) || 800 });
+  if (!res || !res.ok) throw new Error((res && res.error) || "Could not start deep capture");
+  deep.tabId = tab.id;
+  return setCapture({ status: "deep_capturing", error: "", stopReason: "", runId: capture.runId });
+}
+
+async function fetchDetails({ jobIds, delayMs = 1200 } = {}) {
+  assertIdle();
+  const tab = await activeLinkedInTab();
+  const { capture = {} } = await chrome.storage.local.get("capture");
+  if (!capture.runId) throw new Error("Capture jobs first (no run yet)");
+  const done = new Set(capture.detailDone || []);
+  const ids = (jobIds && jobIds.length ? jobIds.map(String) : capture.jobIds || []).filter((id) => !done.has(id));
+  if (!ids.length) throw new Error("No pending jobs to fetch details for");
+  detailRunning = true;
+  stopRequested = false;
+  await setCapture({ status: "fetching_details", detailTotal: ids.length, detailSent: 0, error: "", stopReason: "" });
+  // Fire and forget: progress flows through CAPTURE_PROGRESS.
+  runDetailLoop(tab.id, capture.runId, ids, delayMs).finally(() => {
+    detailRunning = false;
+  });
+  return { started: true, pending: ids.length };
+}
+
+async function runDetailLoop(tabId, runId, ids, delayMs) {
+  let n = 0;
+  let reason = "done";
+  try {
+    for (const jobId of ids) {
+      if (stopRequested) {
+        reason = "stopped";
+        break;
+      }
+      let res;
+      try {
+        res = await sendToTab(tabId, { type: "FETCH_DETAIL", jobId, delayMs });
+      } catch (e) {
+        res = { ok: false, error: String(e.message || e) };
+      }
+      if (res && res.blocked) {
+        reason = "blocked";
+        break;
+      }
+      const job = res && res.ok && res.detail_payload
+        ? { linkedin_job_id: jobId, detail_payload: res.detail_payload }
+        : buildDetailJob(jobId, null);
+      await batchJobs(runId, [job], true);
+      n += 1;
+      const { capture = {} } = await chrome.storage.local.get("capture");
+      const detailDone = job.detail_payload ? [...(capture.detailDone || []), jobId] : capture.detailDone || [];
+      await setCapture({ detailSent: n, detailDone });
+      await sleep(delayMs);
+    }
+    await setCapture({ status: "done", stopReason: reason });
+  } catch (e) {
+    await setCapture({ status: "error", error: String(e.message || e) });
   }
-  const total = (capture.total || 0) + jobs.length;
-  await setCapture({ status: "uploading", total, error: "" });
-  let sent = capture.sent || 0;
-  for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
-    const chunk = jobs.slice(i, i + BATCH_SIZE);
-    await batchJobs(capture.runId, chunk, true);
-    sent += chunk.length;
-    await setCapture({ sent });
-  }
-  return setCapture({ status: "done", sent });
 }
 
 const handlers = {
@@ -137,9 +227,68 @@ const handlers = {
     await resetRun();
     return { ok: true };
   },
-  // Task 6 stubs: deep capture / detail fetch not implemented yet.
-  async DEEP_CAPTURE() {
-    return { ok: false, error: "Deep capture is not implemented yet (Task 6)" };
+  async DEEP_CAPTURE(msg) {
+    assertIdle();
+    try {
+      const capture = await startDeepCapture(msg);
+      return { ok: true, capture };
+    } catch (err) {
+      await setCapture({ status: "error", error: String(err.message || err) });
+      throw err;
+    }
+  },
+  // Sent by the content script for each batch of newly seen cards.
+  DEEP_BATCH: (msg) =>
+    enqueue(async () => {
+      const { capture = {} } = await chrome.storage.local.get("capture");
+      if (!capture.runId) throw new Error("No active run");
+      await uploadJobs(capture.runId, msg.jobs || []);
+      await setCapture({ status: "deep_capturing" });
+      return { ok: true };
+    }),
+  DEEP_DONE: (msg) =>
+    enqueue(async () => {
+      deep.tabId = null;
+      if (msg.reason === "error") {
+        await setCapture({ status: "error", error: msg.error || "Deep capture failed" });
+      } else {
+        await setCapture({
+          status: msg.reason === "blocked" ? "blocked" : "done",
+          stopReason: msg.reason,
+          error: msg.reason === "blocked" ? "LinkedIn showed a checkpoint/CAPTCHA — solve it, then resume" : "",
+        });
+      }
+      return { ok: true };
+    }),
+  async STOP() {
+    stopRequested = true;
+    if (deep.tabId === null && !detailRunning) {
+      // Nothing live in this worker (e.g. it restarted): clear any stale busy status.
+      const { capture = {} } = await chrome.storage.local.get("capture");
+      if (["deep_capturing", "fetching_details"].includes(capture.status)) {
+        await setCapture({ status: "done", stopReason: "stopped" });
+      }
+    }
+    if (deep.tabId !== null) {
+      try {
+        await chrome.tabs.sendMessage(deep.tabId, { type: "STOP" });
+      } catch {
+        // Content script is gone (tab closed/navigated): release the lock ourselves.
+        deep.tabId = null;
+        await setCapture({ status: "done", stopReason: "stopped" });
+      }
+    }
+    return { ok: true };
+  },
+  async FETCH_DETAILS(msg) {
+    assertIdle();
+    try {
+      const r = await fetchDetails(msg);
+      return { ok: true, ...r };
+    } catch (err) {
+      await setCapture({ status: "error", error: String(err.message || err) });
+      throw err;
+    }
   },
 };
 
