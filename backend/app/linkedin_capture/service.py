@@ -100,15 +100,27 @@ def get_run(db: Session, user, run_id: str) -> dict:
     return run_payload(db, owned(db, LinkedInCaptureRun, run_id, user.organization_id))
 
 
-def list_jobs(db: Session, user, run_id: str, page_number: int = 1, limit: int = 100) -> dict:
+def list_jobs(
+    db: Session,
+    user,
+    run_id: str,
+    page_number: int = 1,
+    limit: int = 100,
+    detail_status: str | None = None,
+) -> dict:
     owned(db, LinkedInCaptureRun, run_id, user.organization_id)
+    conditions = [LinkedInJobRaw.run_id == run_id]
+    if detail_status:
+        if detail_status not in DETAIL_STATUSES:
+            raise HTTPException(422, f"detail_status must be one of {', '.join(DETAIL_STATUSES)}")
+        conditions.append(LinkedInJobRaw.detail_status == detail_status)
     return page(
         db,
         LinkedInJobRaw,
         user.organization_id,
         page_number,
         limit,
-        [LinkedInJobRaw.run_id == run_id],
+        conditions,
         order=(LinkedInJobRaw.created_at, LinkedInJobRaw.linkedin_job_id),
     )
 
@@ -258,6 +270,12 @@ def upsert_jobs_batch(
         progress.pop("warning", None)
     run.status = "idle"
     run.error = None
+    if progress.get("details_requested") and not db.scalar(
+        select(LinkedInJobRaw.id)
+        .where(LinkedInJobRaw.run_id == run.id, LinkedInJobRaw.detail_status == "pending")
+        .limit(1)
+    ):
+        progress.pop("details_requested", None)  # Studio's request is fully served
     run.progress = progress
     audit(
         db,
@@ -280,7 +298,10 @@ def request_fetch_details(
     """Mark jobs as needing detail scrape and return them for the extension.
 
     ``job_ids`` may hold LinkedInJobRaw ids or LinkedIn job ids. ``None`` selects every job
-    still ``pending``/``failed``. Explicitly requested jobs are reset to ``pending``.
+    still ``pending``/``failed``. Selected jobs are (re)set to ``pending`` and the run gets
+    ``progress.details_requested`` so the extension's background poll knows Studio asked for
+    them (plain freshly-captured pending jobs are NOT scraped automatically). The flag clears
+    once no pending jobs remain (see ``upsert_jobs_batch``).
     """
     run = owned(db, LinkedInCaptureRun, run_id, user.organization_id)
     query = select(LinkedInJobRaw).where(
@@ -289,6 +310,8 @@ def request_fetch_details(
     if job_ids is None:
         query = query.where(LinkedInJobRaw.detail_status.in_(("pending", "failed")))
         jobs = list(db.scalars(query.order_by(LinkedInJobRaw.created_at)))
+        for job in jobs:
+            job.detail_status = "pending"  # retry failed ones too
     else:
         ids = list(dict.fromkeys(job_ids))
         query = query.where(
@@ -304,6 +327,7 @@ def request_fetch_details(
         run.progress = {
             **(run.progress or {}),
             "message": f"Waiting for details on {len(jobs)} job(s)",
+            "details_requested": True,
         }
         audit(db, user, "linkedin_capture.details_requested", run.id, {"count": len(jobs)})
     db.commit()

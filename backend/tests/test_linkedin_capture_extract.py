@@ -54,3 +54,44 @@ def test_job_text_includes_list_and_detail():
         }
     )
     assert "list-bit" in text and "detail-bit" in text
+
+
+def test_free_mail_email_falls_back_to_job_company():
+    drafts = extract_from_job(
+        title="Engineer",
+        company="Acme Corp",
+        location="",
+        job_url="https://www.linkedin.com/jobs/view/5",
+        list_payload={},
+        detail_payload={"description": "Send CV to hiring.team@gmail.com"},
+    )
+    assert [d.email for d in drafts] == ["hiring.team@gmail.com"]
+    assert drafts[0].company == "Acme Corp"
+    assert drafts[0].selected is False
+    assert "hiring.team@gmail.com" in drafts[0].snippet
+    assert drafts[0].signals.get("source") == "linkedin_job_post"
+
+
+def test_free_mail_fallback_skips_hard_rejected_and_needs_company():
+    drafts = extract_from_job(
+        title="",
+        company="",
+        location="",
+        job_url="",
+        list_payload={},
+        detail_payload={"description": "Send CV to a.b@gmail.com or noreply@acme.com"},
+    )
+    assert drafts == []
+
+
+def test_snippet_uses_near_email_context_not_job_header():
+    drafts = extract_from_job(
+        title="Backend Engineer",
+        company="Acme Corp",
+        location="Remote",
+        job_url="https://www.linkedin.com/jobs/view/6",
+        list_payload={},
+        detail_payload={"description": "Contact recruiter Jane Doe at jane@acme.com for details."},
+    )
+    assert len(drafts) == 1
+    assert "jane@acme.com" in drafts[0].snippet

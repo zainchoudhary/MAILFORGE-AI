@@ -77,14 +77,20 @@ export async function refreshTokens() {
 export async function apiFetch(path, options = {}) {
   const doFetch = async (token) => {
     const { apiBase } = await getSettings();
-    return fetch(`${normalizeBase(apiBase)}/api/v1${path}`, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    try {
+      return await fetch(`${normalizeBase(apiBase)}/api/v1${path}`, {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.headers || {}),
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    } catch (e) {
+      const err = new Error(`Network error: ${e && e.message ? e.message : e}`);
+      err.network = true;
+      throw err;
+    }
   };
   const { access_token } = await getSettings();
   if (!access_token) throw new Error("Not signed in");
@@ -92,8 +98,29 @@ export async function apiFetch(path, options = {}) {
   if (res.status === 401) {
     res = await doFetch(await refreshTokens());
   }
-  if (!res.ok) throw new Error(await errorText(res));
+  if (!res.ok) {
+    const err = new Error(await errorText(res));
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
+}
+
+// Uploads are idempotent (server upserts by job id), so transient failures are safe to retry.
+export const retryConfig = { retries: 3, baseMs: 500 };
+
+export const isRetryable = (err) => Boolean(err && (err.network || (err.status >= 500 && err.status < 600)));
+
+/** Retry on network errors and 5xx only (never 4xx), with exponential backoff; rethrows the last error. */
+export async function withRetry(fn, { retries = retryConfig.retries, baseMs = retryConfig.baseMs } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= retries || !isRetryable(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, baseMs * 2 ** attempt));
+    }
+  }
 }
 
 export function createRun({ search_url = "", search_query_snapshot = "" } = {}) {
@@ -104,10 +131,25 @@ export function createRun({ search_url = "", search_query_snapshot = "" } = {}) 
 }
 
 export function batchJobs(runId, jobs, extract = true) {
-  return apiFetch(`/linkedin-capture/runs/${encodeURIComponent(runId)}/jobs/batch`, {
-    method: "POST",
-    body: JSON.stringify({ jobs, extract }),
-  });
+  return withRetry(() =>
+    apiFetch(`/linkedin-capture/runs/${encodeURIComponent(runId)}/jobs/batch`, {
+      method: "POST",
+      body: JSON.stringify({ jobs, extract }),
+    })
+  );
+}
+
+export function getRun(runId) {
+  return withRetry(() => apiFetch(`/linkedin-capture/runs/${encodeURIComponent(runId)}`));
+}
+
+/** Jobs Studio asked the extension to scrape (detail_status = pending). */
+export function listPendingJobs(runId, limit = 200) {
+  return withRetry(() =>
+    apiFetch(
+      `/linkedin-capture/runs/${encodeURIComponent(runId)}/jobs?detail_status=pending&limit=${limit}`
+    )
+  );
 }
 
 export function studioRunUrl(studioUrl, runId) {

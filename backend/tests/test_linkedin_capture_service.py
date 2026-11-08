@@ -97,3 +97,46 @@ def test_patch_candidate_rejects_bad_email(user, db):
     assert exc.value.status_code == 422
     db.refresh(cand)
     assert cand.email == "jane.doe@acme-corp.com"
+
+
+def test_list_jobs_filters_by_detail_status(user, db):
+    run = service.create_run(db, user)
+    service.upsert_jobs_batch(
+        db,
+        user,
+        run.id,
+        [_job("1"), _job("2", detail_payload={"description": "Nothing here"})],
+        extract=False,
+    )
+    pending = service.list_jobs(db, user, run.id, detail_status="pending")
+    assert [j["linkedin_job_id"] for j in pending["items"]] == ["1"]
+    assert pending["total"] == 1
+    assert service.list_jobs(db, user, run.id)["total"] == 2
+    with pytest.raises(HTTPException) as exc:
+        service.list_jobs(db, user, run.id, detail_status="bogus")
+    assert exc.value.status_code == 422
+
+
+def test_fetch_details_flags_run_and_clears_when_served(user, db):
+    run = service.create_run(db, user)
+    service.upsert_jobs_batch(db, user, run.id, [_job("1"), _job("2")], extract=False)
+    db.refresh(run)
+    assert "details_requested" not in run.progress  # fresh captures are not auto-scraped
+    # one failed job is retried by a Studio "fetch all"
+    service.upsert_jobs_batch(
+        db, user, run.id, [_job("2", detail_status="failed")], extract=False
+    )
+    out = service.request_fetch_details(db, user, run.id, None)
+    assert sorted(out["linkedin_job_ids"]) == ["1", "2"]
+    db.refresh(run)
+    assert run.progress["details_requested"] is True
+    service.upsert_jobs_batch(
+        db, user, run.id, [_job("1", detail_payload={"description": "x"})], extract=False
+    )
+    db.refresh(run)
+    assert run.progress.get("details_requested") is True  # job 2 still pending
+    service.upsert_jobs_batch(
+        db, user, run.id, [_job("2", detail_payload={"description": "y"})], extract=False
+    )
+    db.refresh(run)
+    assert "details_requested" not in run.progress

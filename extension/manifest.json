@@ -3,7 +3,7 @@
   "name": "Outreach Studio — LinkedIn Jobs Capture",
   "version": "0.1.0",
   "description": "Capture LinkedIn Jobs into Outreach Studio",
-  "permissions": ["storage", "sidePanel", "activeTab", "scripting"],
+  "permissions": ["storage", "sidePanel", "activeTab", "scripting", "alarms"],
   "host_permissions": [
     "https://www.linkedin.com/jobs/*",
     "http://localhost:8000/*",

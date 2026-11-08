@@ -6,6 +6,8 @@ import {
   normalizeBase,
   createRun,
   batchJobs,
+  getRun,
+  listPendingJobs,
 } from "./lib/api.js";
 import { buildDetailJob } from "./lib/detail.js";
 import { sleep } from "./lib/capture.js";
@@ -81,7 +83,13 @@ async function uploadJobs(runId, jobs) {
   const ids = new Set(capture.jobIds || []);
   for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
     const chunk = jobs.slice(i, i + BATCH_SIZE);
-    await batchJobs(runId, chunk, true);
+    try {
+      await batchJobs(runId, chunk, true); // retries network errors / 5xx internally
+    } catch (e) {
+      const msg = `Upload failed after retries (${sent} of ${jobs.length} sent): ${String(e.message || e)}`;
+      await setCapture({ sent, jobIds: [...ids], status: "error", error: msg });
+      throw new Error(msg);
+    }
     sent += chunk.length;
     chunk.forEach((j) => ids.add(j.linkedin_job_id));
     await setCapture({ sent, jobIds: [...ids] });
@@ -116,14 +124,32 @@ async function startDeepCapture({ maxJobs = 300, delayMs = 800 } = {}) {
   return setCapture({ status: "deep_capturing", error: "", stopReason: "", runId: capture.runId });
 }
 
-async function fetchDetails({ jobIds, delayMs } = {}) {
+// Jobs Studio marked pending (its "Fetch job details" button). Empty on any API/network error.
+async function serverPendingIds(runId) {
+  try {
+    const res = await listPendingJobs(runId);
+    return (res.items || []).map((j) => String(j.linkedin_job_id)).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchDetails({ jobIds, delayMs, fromStudio = false } = {}) {
   assertIdle();
   delayMs = clampDetailDelay(delayMs);
   const tab = await activeLinkedInTab();
   const { capture = {} } = await chrome.storage.local.get("capture");
   if (!capture.runId) throw new Error("Capture jobs first (no run yet)");
   const done = new Set(capture.detailDone || []);
-  const ids = (jobIds && jobIds.length ? jobIds.map(String) : capture.jobIds || []).filter((id) => !done.has(id));
+  let ids;
+  if (jobIds && jobIds.length) {
+    ids = jobIds.map(String).filter((id) => fromStudio || !done.has(id));
+  } else {
+    // Blank = everything still pending locally PLUS whatever Studio re-requested (even if we
+    // already scraped it once, Studio flips it back to pending).
+    const local = (capture.jobIds || []).filter((id) => !done.has(id));
+    ids = [...new Set([...(await serverPendingIds(capture.runId)), ...local])];
+  }
   if (!ids.length) throw new Error("No pending jobs to fetch details for");
   detailRunning = true;
   stopRequested = false;
@@ -133,6 +159,40 @@ async function fetchDetails({ jobIds, delayMs } = {}) {
     detailRunning = false;
   });
   return { started: true, pending: ids.length };
+}
+
+// Studio "Fetch job details" only marks jobs pending on the server; this picks them up.
+// Runs from a chrome.alarms tick (~30s) and is a no-op unless the extension is idle, signed in,
+// has an active run Studio asked details for, and a LinkedIn Jobs tab is active.
+const SKIP_POLL_REASONS = ["stopped", "blocked", "too_many_failures"];
+async function pollPendingDetails() {
+  if (deep.tabId !== null || detailRunning) return { started: false, reason: "busy" };
+  const { capture = {} } = await chrome.storage.local.get("capture");
+  if (!capture.runId) return { started: false, reason: "no_run" };
+  if (["creating_run", "uploading", "deep_capturing", "fetching_details", "blocked"].includes(capture.status)) {
+    return { started: false, reason: "not_idle" };
+  }
+  if (SKIP_POLL_REASONS.includes(capture.stopReason)) return { started: false, reason: capture.stopReason };
+  try {
+    const run = await getRun(capture.runId);
+    if (!run || !run.progress || !run.progress.details_requested || run.status === "cancelled") {
+      return { started: false, reason: "not_requested" };
+    }
+    const ids = await serverPendingIds(capture.runId);
+    if (!ids.length) return { started: false, reason: "none_pending" };
+    const r = await fetchDetails({ jobIds: ids, fromStudio: true });
+    return { ...r, reason: "started" };
+  } catch (e) {
+    // Signed out, offline, or no LinkedIn tab active: try again next tick.
+    return { started: false, reason: String((e && e.message) || e) };
+  }
+}
+
+if (typeof chrome !== "undefined" && chrome.alarms) {
+  chrome.alarms.create("poll-pending-details", { periodInMinutes: 0.5 });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === "poll-pending-details") enqueue(pollPendingDetails).catch(() => {});
+  });
 }
 
 async function runDetailLoop(tabId, runId, ids, delayMs) {
@@ -288,6 +348,7 @@ const handlers = {
     }
     return { ok: true };
   },
+  POLL_PENDING: () => enqueue(pollPendingDetails).then((r) => ({ ok: true, ...r })),
   async FETCH_DETAILS(msg) {
     assertIdle();
     try {

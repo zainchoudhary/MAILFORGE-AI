@@ -8,6 +8,7 @@ import { errorText } from '../services/api';
 import {
   CAPTURE_RUNS_KEY as RUNS_KEY,
   INSTALL_STEPS,
+  PAGE_LIMIT,
   canCancelRun,
   cancelRun,
   detailCounts,
@@ -16,12 +17,14 @@ import {
   hasPendingDetails,
   isRunExtracting,
   isRunLive,
+  isTruncated,
   patchCandidate,
   progressLine,
   runTitle,
   saveGroup,
   saveResultSummary,
   setCandidatesSelected,
+  showingLabel,
 } from '../services/linkedinCapture';
 import { BusyButton, Empty, Field, PageHeader, QueryState, Status } from '../components/Common';
 import { Button } from '../components/ui/button';
@@ -114,8 +117,8 @@ export default function LinkedInFinder() {
   // Jobs keep changing after the run leaves idle/extracting: the extension fills in details
   // for pending jobs, and a fetch-details request may not have flipped statuses yet.
   const detailsRequested = useRef(false);
-  const jobsUrl = `${RUNS_KEY}/${activeId}/jobs?limit=200`;
-  const candidatesUrl = `${RUNS_KEY}/${activeId}/candidates?limit=200`;
+  const jobsUrl = `${RUNS_KEY}/${activeId}/jobs?limit=${PAGE_LIMIT}`;
+  const candidatesUrl = `${RUNS_KEY}/${activeId}/candidates?limit=${PAGE_LIMIT}`;
   const shouldPoll = (runValue, jobsValue) =>
     isRunLive(runValue) || hasPendingDetails(jobsValue?.items) || detailsRequested.current;
 
@@ -146,6 +149,8 @@ export default function LinkedInFinder() {
   const extracting = isRunExtracting(runData);
   const jobItems = jobs.data?.items || [];
   const counts = detailCounts(jobItems);
+  const jobsTotal = jobs.data?.total ?? jobItems.length;
+  const jobsTruncated = isTruncated(jobItems.length, jobsTotal);
   // Stop the post-request poll once the server reports nothing pending.
   useEffect(() => {
     if (detailsRequested.current && jobs.data && counts.pending === 0) detailsRequested.current = false;
@@ -162,6 +167,8 @@ export default function LinkedInFinder() {
           : candidate
       )
     : rawItems;
+  const candidatesTotal = candidates.data?.total ?? items.length;
+  const candidatesTruncated = isTruncated(items.length, candidatesTotal);
   const selectedIds = items.filter((candidate) => candidate.selected).map((candidate) => candidate.id);
   const selectedCount = selectedIds.length;
   // Selection PATCHes still in flight: saving now could miss them server-side.
@@ -284,7 +291,7 @@ export default function LinkedInFinder() {
       <PageHeader
         eyebrow="AUDIENCE WORKSPACE"
         title="LinkedIn Search"
-        description="Capture LinkedIn Jobs with the MailForge Chrome extension, pull emails from the job posts, then review and save leads as a recipient group."
+        description="Capture LinkedIn Jobs with the Outreach Studio Chrome extension, pull emails from the job posts, then review and save leads as a recipient group."
       />
 
       <div className="lead-layout">
@@ -333,7 +340,7 @@ export default function LinkedInFinder() {
                     <div className="lead-toolbar">
                       <div className="lead-selection-tools">
                         <span className="selection-indicator">
-                          {jobItems.length} jobs · {counts.fetched} with details{needsDetails ? ` · ${needsDetails} need details` : ''}
+                          {showingLabel(jobItems.length, jobsTotal, 'job')} · {counts.fetched} with details{needsDetails ? ` · ${needsDetails} need details` : ''}{jobsTruncated ? ' (among shown jobs)' : ''}
                         </span>
                       </div>
                       <div className="lead-toolbar-actions">
@@ -346,7 +353,7 @@ export default function LinkedInFinder() {
                           variant="secondary"
                           size="sm"
                           busy={fetchDetails.isPending}
-                          disabled={runData.status === 'cancelled' || needsDetails === 0}
+                          disabled={runData.status === 'cancelled' || (needsDetails === 0 && !jobsTruncated)}
                           onClick={() => fetchDetails.mutate()}
                         >
                           <DownloadCloud size={14} /> Fetch job details
@@ -401,11 +408,11 @@ export default function LinkedInFinder() {
 
                     <div className="lead-toolbar">
                       <div className="lead-selection-tools">
-                        <span className="selection-indicator">{selectedCount} of {items.length} leads selected</span>
+                        <span className="selection-indicator">{selectedCount} selected · {showingLabel(items.length, candidatesTotal, 'lead')}{candidatesTruncated ? ' (selection applies to shown leads only)' : ''}</span>
                         {items.length > 0 && (
                           <>
                             <Button type="button" variant="secondary" size="sm" disabled={allSelected} onClick={() => toggleSelectAll(true)}>
-                              Select all
+                              {candidatesTruncated ? `Select shown (${items.length})` : 'Select all'}
                             </Button>
                             <Button type="button" variant="secondary" size="sm" disabled={selectedCount === 0} onClick={() => toggleSelectAll(false)}>
                               Clear
@@ -440,7 +447,7 @@ export default function LinkedInFinder() {
                                   <input
                                     ref={selectAllRef}
                                     type="checkbox"
-                                    aria-label="Select all leads"
+                                    aria-label={candidatesTruncated ? 'Select all shown leads' : 'Select all leads'}
                                     checked={allSelected}
                                     disabled={!items.length}
                                     onChange={(event) => toggleSelectAll(event.target.checked)}

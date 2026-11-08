@@ -45,11 +45,12 @@ def upsert_jobs_batch(
 def list_jobs(
     run_id: str,
     page_number: int = Query(1, ge=1, alias="page"),
-    limit: int = Query(100, ge=1, le=200),
+    limit: int = Query(100, ge=1, le=500),
+    detail_status: str | None = Query(None),
     user=Depends(current_user),
     db=Depends(get_db),
 ):
-    return service.list_jobs(db, user, run_id, page_number, limit)
+    return service.list_jobs(db, user, run_id, page_number, limit, detail_status)
 
 
 @router.post("/runs/{run_id}/jobs/fetch-details")
@@ -68,7 +69,7 @@ def extract(run_id: str, data: ExtractInput, user=Depends(editor), db=Depends(ge
 def list_candidates(
     run_id: str,
     page_number: int = Query(1, ge=1, alias="page"),
-    limit: int = Query(100, ge=1, le=200),
+    limit: int = Query(100, ge=1, le=500),
     user=Depends(current_user),
     db=Depends(get_db),
 ):

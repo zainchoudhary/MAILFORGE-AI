@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { api } from './api';
-import { canCancelRun, detailCounts, hasPendingDetails, isRunLive, setCandidatesSelected, progressLine, runTitle, saveResultSummary } from './linkedinCapture';
+import { INSTALL_STEPS, PAGE_LIMIT, isTruncated, showingLabel, canCancelRun, detailCounts, hasPendingDetails, isRunLive, setCandidatesSelected, progressLine, runTitle, saveResultSummary } from './linkedinCapture';
 
 describe('linkedinCapture helpers', () => {
   it('detects live and cancellable runs', () => {
@@ -42,5 +42,20 @@ describe('linkedinCapture helpers', () => {
     expect(patch).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({ updated: 1, failed: 1 });
     patch.mockRestore();
+  });
+
+  it('labels truncated lists with the API total', () => {
+    expect(PAGE_LIMIT).toBeGreaterThanOrEqual(500);
+    expect(isTruncated(200, 300)).toBe(true);
+    expect(isTruncated(5, 5)).toBe(false);
+    expect(isTruncated(5, undefined)).toBe(false);
+    expect(showingLabel(200, 300, 'job')).toBe('Showing 200 of 300 jobs');
+    expect(showingLabel(1, 1, 'lead')).toBe('1 lead');
+    expect(showingLabel(3, undefined, 'lead')).toBe('3 leads');
+  });
+
+  it('uses the Outreach Studio name in install steps', () => {
+    expect(INSTALL_STEPS.join(' ')).not.toMatch(/mailforge/i);
+    expect(INSTALL_STEPS.join(' ')).toMatch(/Outreach Studio/);
   });
 });

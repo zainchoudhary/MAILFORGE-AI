@@ -140,3 +140,56 @@ def test_org_isolation(client, account, other_account, db):
     assert client.get(f"{BASE}/runs/{run_id}", headers=other_account).status_code == 404
     assert client.get(f"{BASE}/runs/{run_id}/candidates", headers=other_account).status_code == 404
     assert client.get(f"{BASE}/runs", headers=other_account).json()["items"] == []
+
+
+def test_jobs_endpoint_filters_by_detail_status(client, account):
+    run_id = _new_run(client, account)
+    client.post(
+        f"{BASE}/runs/{run_id}/jobs/batch",
+        headers=account,
+        json={"jobs": [_job("1"), _job("2", detail_payload={"description": "hello"})]},
+    )
+    res = client.get(f"{BASE}/runs/{run_id}/jobs?detail_status=pending", headers=account)
+    assert res.status_code == 200
+    assert [j["linkedin_job_id"] for j in res.json()["items"]] == ["1"]
+    assert res.json()["total"] == 1
+    bad = client.get(f"{BASE}/runs/{run_id}/jobs?detail_status=nope", headers=account)
+    assert bad.status_code == 422
+
+
+def test_cross_org_writes_are_isolated(client, account, other_account, db):
+    run_id = _new_run(client, account)
+    client.post(
+        f"{BASE}/runs/{run_id}/jobs/batch",
+        headers=account,
+        json={"jobs": [_job(detail_payload={"description": "Email jobs@acme.test now."})]},
+    )
+    cid = client.get(f"{BASE}/runs/{run_id}/candidates", headers=account).json()["items"][0]["id"]
+
+    batch = client.post(
+        f"{BASE}/runs/{run_id}/jobs/batch", headers=other_account, json={"jobs": [_job("999")]}
+    )
+    assert batch.status_code == 404
+    patch = client.patch(
+        f"{BASE}/runs/{run_id}/candidates/{cid}", headers=other_account, json={"selected": True}
+    )
+    assert patch.status_code == 404
+    save = client.post(
+        f"{BASE}/runs/{run_id}/save-group",
+        headers=other_account,
+        json={"group_name": "Stolen", "candidate_ids": [cid]},
+    )
+    assert save.status_code == 404
+    # Other org also cannot use its own run with this org's candidate id.
+    other_run = _new_run(client, other_account)
+    cross = client.patch(
+        f"{BASE}/runs/{other_run}/candidates/{cid}", headers=other_account, json={"selected": True}
+    )
+    assert cross.status_code == 404
+
+    # Owner's data untouched.
+    jobs = client.get(f"{BASE}/runs/{run_id}/jobs", headers=account).json()
+    assert jobs["total"] == 1
+    cand = client.get(f"{BASE}/runs/{run_id}/candidates", headers=account).json()["items"][0]
+    assert cand["id"] == cid
+    assert client.get(f"{BASE}/runs/{run_id}", headers=account).json()["status"] != "cancelled"

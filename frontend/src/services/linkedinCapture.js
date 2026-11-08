@@ -12,10 +12,21 @@ export const hasPendingDetails = (jobs) => (jobs || []).some((job) => (job.detai
 export const isRunExtracting = (run) => run?.status === 'extracting';
 export const canCancelRun = (run) => !!run && ['idle', 'extracting', 'ready'].includes(run.status);
 
+/** Rows requested per page; the API caps a page at this size (jobs max out at 500 per run). */
+export const PAGE_LIMIT = 500;
+/** True when the server holds more rows than the page we loaded. */
+export const isTruncated = (loaded, total) => Number.isFinite(total) && total > loaded;
+/** "12 jobs" or "Showing 500 of 620 jobs". */
+export const showingLabel = (loaded, total, noun) => {
+  const count = Number.isFinite(total) ? total : loaded;
+  const plural = (n) => `${noun}${n === 1 ? '' : 's'}`;
+  return isTruncated(loaded, total) ? `Showing ${loaded} of ${count} ${plural(count)}` : `${loaded} ${plural(loaded)}`;
+};
+
 export const INSTALL_STEPS = [
-  'Install the MailForge LinkedIn Jobs extension in Chrome (chrome://extensions → Load unpacked → select the “extension” folder).',
-  'Set API base to the backend and sign in from the extension side panel with your MailForge account.',
-  'Open a LinkedIn Jobs search and use Capture visible, Deep capture, or Fetch details. Jobs stream into this page.',
+  'Install the Outreach Studio LinkedIn Jobs extension in Chrome (chrome://extensions → Load unpacked → select the “extension” folder).',
+  'Set API base to the backend and sign in from the extension side panel with your Outreach Studio account.',
+  'Open a LinkedIn Jobs search and use Capture visible, Deep capture, or Fetch details in the extension side panel. Jobs stream into this page. The “Fetch job details” button here also works: the extension picks it up within about 30 seconds while a LinkedIn Jobs tab is active.',
   'Emails are extracted only if they appear on the job post. Review leads here, then save them as a recipient group.',
 ];
 
