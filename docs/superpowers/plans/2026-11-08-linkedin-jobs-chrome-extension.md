@@ -124,17 +124,97 @@ down_revision = "0005"
 branch_labels = None
 depends_on = None
 
+
 def upgrade():
-    # Mirror column shapes from entities; create indexes on organization_id, run_id, status, created_at
-    # UniqueConstraint run_id+linkedin_job_id and run_id+email
-    ...
+    op.create_table(
+        "linkedin_capture_runs",
+        sa.Column("created_by_user_id", sa.String(length=36), nullable=False),
+        sa.Column("search_url", sa.Text(), nullable=False),
+        sa.Column("search_query_snapshot", sa.Text(), nullable=False),
+        sa.Column("status", sa.String(length=30), nullable=False),
+        sa.Column("progress", sa.JSON(), nullable=False),
+        sa.Column("error", sa.Text(), nullable=True),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("organization_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.String(length=36), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(["created_by_user_id"], ["users.id"]),
+        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"]),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index("ix_linkedin_capture_runs_created_by_user_id", "linkedin_capture_runs", ["created_by_user_id"])
+    op.create_index("ix_linkedin_capture_runs_status", "linkedin_capture_runs", ["status"])
+    op.create_index("ix_linkedin_capture_runs_organization_id", "linkedin_capture_runs", ["organization_id"])
+    op.create_index("ix_linkedin_capture_runs_created_at", "linkedin_capture_runs", ["created_at"])
+
+    op.create_table(
+        "linkedin_job_raw",
+        sa.Column("run_id", sa.String(length=36), nullable=False),
+        sa.Column("linkedin_job_id", sa.String(length=64), nullable=False),
+        sa.Column("title", sa.String(length=500), nullable=False),
+        sa.Column("company", sa.String(length=300), nullable=False),
+        sa.Column("location", sa.String(length=300), nullable=False),
+        sa.Column("job_url", sa.Text(), nullable=False),
+        sa.Column("list_payload", sa.JSON(), nullable=False),
+        sa.Column("detail_payload", sa.JSON(), nullable=True),
+        sa.Column("detail_status", sa.String(length=30), nullable=False),
+        sa.Column("organization_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.String(length=36), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"]),
+        sa.ForeignKeyConstraint(["run_id"], ["linkedin_capture_runs.id"]),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("run_id", "linkedin_job_id"),
+    )
+    op.create_index("ix_linkedin_job_raw_run_id", "linkedin_job_raw", ["run_id"])
+    op.create_index("ix_linkedin_job_raw_organization_id", "linkedin_job_raw", ["organization_id"])
+    op.create_index("ix_linkedin_job_raw_created_at", "linkedin_job_raw", ["created_at"])
+
+    op.create_table(
+        "linkedin_lead_candidates",
+        sa.Column("run_id", sa.String(length=36), nullable=False),
+        sa.Column("job_raw_id", sa.String(length=36), nullable=True),
+        sa.Column("email", sa.String(length=320), nullable=False),
+        sa.Column("name", sa.String(length=200), nullable=False),
+        sa.Column("company", sa.String(length=200), nullable=False),
+        sa.Column("position", sa.String(length=200), nullable=False),
+        sa.Column("source_url", sa.Text(), nullable=False),
+        sa.Column("source_title", sa.String(length=500), nullable=False),
+        sa.Column("snippet", sa.Text(), nullable=False),
+        sa.Column("score", sa.Float(), nullable=False),
+        sa.Column("signals", sa.JSON(), nullable=False),
+        sa.Column("selected", sa.Boolean(), nullable=False),
+        sa.Column("existing_recipient_id", sa.String(length=36), nullable=True),
+        sa.Column("organization_id", sa.String(length=36), nullable=False),
+        sa.Column("id", sa.String(length=36), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(["existing_recipient_id"], ["recipients.id"]),
+        sa.ForeignKeyConstraint(["job_raw_id"], ["linkedin_job_raw.id"]),
+        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"]),
+        sa.ForeignKeyConstraint(["run_id"], ["linkedin_capture_runs.id"]),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("run_id", "email"),
+    )
+    op.create_index("ix_linkedin_lead_candidates_run_id", "linkedin_lead_candidates", ["run_id"])
+    op.create_index("ix_linkedin_lead_candidates_organization_id", "linkedin_lead_candidates", ["organization_id"])
+    op.create_index("ix_linkedin_lead_candidates_created_at", "linkedin_lead_candidates", ["created_at"])
+
 
 def downgrade():
-    # drop tables in reverse order: linkedin_lead_candidates, linkedin_job_raw, linkedin_capture_runs
-    ...
+    op.drop_index("ix_linkedin_lead_candidates_created_at", table_name="linkedin_lead_candidates")
+    op.drop_index("ix_linkedin_lead_candidates_organization_id", table_name="linkedin_lead_candidates")
+    op.drop_index("ix_linkedin_lead_candidates_run_id", table_name="linkedin_lead_candidates")
+    op.drop_table("linkedin_lead_candidates")
+    op.drop_index("ix_linkedin_job_raw_created_at", table_name="linkedin_job_raw")
+    op.drop_index("ix_linkedin_job_raw_organization_id", table_name="linkedin_job_raw")
+    op.drop_index("ix_linkedin_job_raw_run_id", table_name="linkedin_job_raw")
+    op.drop_table("linkedin_job_raw")
+    op.drop_index("ix_linkedin_capture_runs_created_at", table_name="linkedin_capture_runs")
+    op.drop_index("ix_linkedin_capture_runs_organization_id", table_name="linkedin_capture_runs")
+    op.drop_index("ix_linkedin_capture_runs_status", table_name="linkedin_capture_runs")
+    op.drop_index("ix_linkedin_capture_runs_created_by_user_id", table_name="linkedin_capture_runs")
+    op.drop_table("linkedin_capture_runs")
 ```
-
-Fill `upgrade()`/`downgrade()` fully following `0005_lead_finder.py` style (explicit columns, FKs, indexes).
 
 - [ ] **Step 3: Add settings**
 
@@ -437,14 +517,32 @@ def test_create_batch_extract_and_save_group(client, account, db):
 
 
 def test_batch_respects_hard_ceiling(client, account, db, monkeypatch):
-    # monkeypatch settings hard_ceiling to 2; post 3 jobs → 422
-    ...
+    from app.core.config import get_settings
+    settings = get_settings()
+    monkeypatch.setattr(settings, "linkedin_capture_hard_ceiling", 2)
+    monkeypatch.setattr(settings, "linkedin_capture_max_jobs_per_run", 2)
+    run_id = client.post(f"{BASE}/runs", headers=account, json={}).json()["id"]
+    jobs = [
+        {
+            "linkedin_job_id": str(i),
+            "title": "T",
+            "company": "C",
+            "location": "",
+            "job_url": f"https://www.linkedin.com/jobs/view/{i}",
+            "list_payload": {},
+        }
+        for i in range(3)
+    ]
+    res = client.post(f"{BASE}/runs/{run_id}/jobs/batch", headers=account, json={"jobs": jobs})
+    assert res.status_code == 422
 
 
 def test_org_isolation(client, account, other_account, db):
-    # create run as account; other_account GET → 404
-    ...
+    run_id = client.post(f"{BASE}/runs", headers=account, json={}).json()["id"]
+    res = client.get(f"{BASE}/runs/{run_id}", headers=other_account)
+    assert res.status_code == 404
 ```
+
 
 Match exact response envelope used by lead_finder (`items` vs list)—inspect `lead_finder.py` and stay consistent.
 
