@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from app.core.config import get_settings
 from app.database.session import SessionLocal
-from app.api.v1 import auth, resources, campaigns, intelligence, public, lead_finder
+from app.api.v1 import auth, resources, campaigns, intelligence, public, lead_finder, linkedin_capture
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("mailforge")
@@ -98,5 +98,5 @@ def health():
         return JSONResponse({"status": "unavailable"}, status_code=503)
 
 
-for router in (auth.router, resources.router, campaigns.router, intelligence.router, public.router, lead_finder.router):
+for router in (auth.router, resources.router, campaigns.router, intelligence.router, public.router, lead_finder.router, linkedin_capture.router):
     app.include_router(router, prefix="/api/v1")
