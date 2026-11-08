@@ -21,7 +21,7 @@
   let stopRequested = false;
   let deepRunning = false;
 
-  const pageText = () => (document.body && document.body.innerText) || "";
+  const blocked = (capture) => capture.isBlockedPage(location.href, document);
 
   // Scroll the results list; if it cannot move further, click "next page".
   async function scrollOrNextPage(S, sleep) {
@@ -52,7 +52,7 @@
         delayMs,
         parse: () => parse.parseVisibleJobs(document, location.origin),
         shouldStop: () => stopRequested,
-        isBlocked: () => capture.isBlockedPage(pageText(), location.href),
+        isBlocked: () => blocked(capture),
         scrollOrNextPage: () => scrollOrNextPage(selectors, capture.sleep),
         onBatch: async (jobs) => {
           const r = await send({ type: "DEEP_BATCH", jobs });
@@ -69,11 +69,14 @@
   async function fetchOne({ jobId, delayMs }) {
     const { parse, detail, capture, selectors } = await loadAll();
     const { sleep } = capture;
-    if (capture.isBlockedPage(pageText(), location.href)) return { ok: true, blocked: true };
+    if (blocked(capture)) return { ok: true, blocked: true };
 
     const onThisJob = () => new RegExp(`currentJobId=${jobId}\\b|/jobs/view/(?:[^/?#]*-)?${jobId}\\b`).test(location.href);
     const before = detail.extractDetail(document);
-    if (!onThisJob()) {
+    // The URL can already name this job while the pane still shows the previous one, so a URL
+    // match alone is never enough once we had to click: the description must also have changed.
+    const switched = !onThisJob();
+    if (switched) {
       const card = [...document.querySelectorAll(selectors.SELECTORS.jobCard)].find((c) => {
         const j = parse.parseJobCard(c, location.origin);
         return j && j.linkedin_job_id === jobId;
@@ -83,23 +86,34 @@
       const link = card.querySelector(selectors.SELECTORS.link) || card;
       link.click();
     }
-    // Wait for the pane to switch to this job and expose a description.
+    const read = () => {
+      const d = detail.extractDetail(document);
+      const ok = detail.acceptDetail({
+        d,
+        before,
+        switched,
+        urlMatches: onThisJob(),
+        paneMatch: detail.paneMatchesJob(document, jobId),
+      });
+      return ok ? d : null;
+    };
+    // Wait for the pane to switch to this job and expose its (new) description.
     const deadline = Date.now() + 10000;
     let d = null;
     while (Date.now() < deadline) {
       await sleep(300);
-      d = detail.extractDetail(document);
-      if (d && (onThisJob() || !before || d.description !== before.description)) break;
-      d = null;
+      if (blocked(capture)) return { ok: true, blocked: true };
+      d = read();
+      if (d) break;
     }
-    if (!d) return capture.isBlockedPage(pageText(), location.href)
-      ? { ok: true, blocked: true }
-      : { ok: false, error: "Description did not load" };
+    if (!d) return { ok: false, error: "Description did not load for this job" };
     const more = document.querySelector(selectors.DETAIL_SELECTORS.seeMore);
     if (more) {
       more.click();
       await sleep(Math.min(delayMs || 400, 600));
-      d = detail.extractDetail(document) || d;
+      // Re-verify after expansion; never keep text from a pane that changed under us.
+      d = read();
+      if (!d) return { ok: false, error: "Pane changed while expanding description" };
     }
     return { ok: true, detail_payload: detail.buildDetailJob(jobId, d).detail_payload };
   }

@@ -9,6 +9,7 @@ import {
 } from "./lib/api.js";
 import { buildDetailJob } from "./lib/detail.js";
 import { sleep } from "./lib/capture.js";
+import { clampMaxJobs, clampDeepDelay, clampDetailDelay, MAX_CONSECUTIVE_DETAIL_FAILURES } from "./lib/limits.js";
 
 const BATCH_SIZE = 100;
 
@@ -109,14 +110,15 @@ async function startDeepCapture({ maxJobs = 300, delayMs = 800 } = {}) {
   const tab = await activeLinkedInTab();
   const capture = await ensureRun({ search_url: tab.url });
   stopRequested = false;
-  const res = await sendToTab(tab.id, { type: "DEEP_START", maxJobs: Number(maxJobs) || 300, delayMs: Number(delayMs) || 800 });
+  const res = await sendToTab(tab.id, { type: "DEEP_START", maxJobs: clampMaxJobs(maxJobs), delayMs: clampDeepDelay(delayMs) });
   if (!res || !res.ok) throw new Error((res && res.error) || "Could not start deep capture");
   deep.tabId = tab.id;
   return setCapture({ status: "deep_capturing", error: "", stopReason: "", runId: capture.runId });
 }
 
-async function fetchDetails({ jobIds, delayMs = 1200 } = {}) {
+async function fetchDetails({ jobIds, delayMs } = {}) {
   assertIdle();
+  delayMs = clampDetailDelay(delayMs);
   const tab = await activeLinkedInTab();
   const { capture = {} } = await chrome.storage.local.get("capture");
   if (!capture.runId) throw new Error("Capture jobs first (no run yet)");
@@ -136,6 +138,7 @@ async function fetchDetails({ jobIds, delayMs = 1200 } = {}) {
 async function runDetailLoop(tabId, runId, ids, delayMs) {
   let n = 0;
   let reason = "done";
+  let failStreak = 0;
   try {
     for (const jobId of ids) {
       if (stopRequested) {
@@ -160,6 +163,11 @@ async function runDetailLoop(tabId, runId, ids, delayMs) {
       const { capture = {} } = await chrome.storage.local.get("capture");
       const detailDone = job.detail_payload ? [...(capture.detailDone || []), jobId] : capture.detailDone || [];
       await setCapture({ detailSent: n, detailDone });
+      failStreak = job.detail_payload ? 0 : failStreak + 1;
+      if (failStreak >= MAX_CONSECUTIVE_DETAIL_FAILURES) {
+        reason = "too_many_failures";
+        break;
+      }
       await sleep(delayMs);
     }
     await setCapture({ status: "done", stopReason: reason });

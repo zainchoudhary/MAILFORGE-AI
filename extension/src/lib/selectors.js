@@ -26,6 +26,19 @@ export const DETAIL_SELECTORS = {
   nextPage: "button.jobs-search-pagination__button--next, button[aria-label='View next page']",
 };
 
-// CAPTCHA / checkpoint heuristics.
-export const BLOCK_URL = /\/(checkpoint|authwall|uas\/login-submit|challenge)\b/i;
-export const BLOCK_TEXT = /checkpoint|unusual activity|security verification|let'?s do a quick security check|verify (that )?you'?re (not )?a (robot|human)/i;
+// CAPTCHA / checkpoint heuristics. Matched against the URL *path* and challenge UI only,
+// never the whole page text (job descriptions can legitimately say "checkpoint").
+export const BLOCK_URL = /\/(checkpoint|authwall|uas\/login-submit|challenge)(\/|$|\?)/i;
+export const BLOCK_SELECTORS = [
+  "#captcha-internal",
+  "#challenge-form",
+  ".captcha-container",
+  ".challenge-dialog",
+  "[data-test-id='challenge']",
+  "form[action*='/checkpoint/']",
+  "iframe[src*='captcha']",
+  "iframe[src*='/checkpoint/']",
+].join(", ");
+// Only checked in headings of pages that show no job description (i.e. not a job view).
+export const BLOCK_HEADING = /unusual activity|security verification|let'?s do a quick security check|verify (that )?you'?re (not )?a (robot|human)/i;
+export const BLOCK_HEADING_SELECTOR = "h1, h2";

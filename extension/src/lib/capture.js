@@ -1,11 +1,29 @@
 // Pure deep-capture loop and block detection; DOM/Chrome access is injected.
-import { BLOCK_URL, BLOCK_TEXT } from "./selectors.js";
+import { BLOCK_URL, BLOCK_SELECTORS, BLOCK_HEADING, BLOCK_HEADING_SELECTOR, DETAIL_SELECTORS } from "./selectors.js";
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** CAPTCHA / checkpoint heuristic on page text or a challenge-style URL. */
-export function isBlockedPage(text = "", url = "") {
-  return BLOCK_URL.test(url || "") || BLOCK_TEXT.test(text || "");
+function pathOf(url) {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return String(url || "").split(/[?#]/)[0];
+  }
+}
+
+/**
+ * CAPTCHA / checkpoint heuristic: challenge-style URL path, or challenge UI in the document.
+ * Deliberately does NOT scan body text, so job descriptions mentioning "checkpoint" are safe.
+ */
+export function isBlockedPage(url = "", doc = null) {
+  if (BLOCK_URL.test(pathOf(url))) return true;
+  if (!doc || !doc.querySelector) return false;
+  if (doc.querySelector(BLOCK_SELECTORS)) return true;
+  if (doc.querySelector(DETAIL_SELECTORS.description)) return false;
+  for (const h of doc.querySelectorAll(BLOCK_HEADING_SELECTOR)) {
+    if (BLOCK_HEADING.test(h.textContent || "")) return true;
+  }
+  return false;
 }
 
 const MAX_STALL = 4; // consecutive iterations with nothing new => list exhausted
