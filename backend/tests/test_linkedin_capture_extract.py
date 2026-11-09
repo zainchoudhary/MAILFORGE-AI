@@ -15,7 +15,7 @@ def test_extracts_email_from_detail_description():
     assert len(drafts) == 1
     assert drafts[0].email == "hiring@acme.com"
     assert drafts[0].company  # from job company if name missing
-    assert drafts[0].source_url.endswith("/123")
+    assert drafts[0].source_url.rstrip("/").endswith("/123")
     assert drafts[0].signals.get("source") == "linkedin_job_post"
 
 
@@ -140,6 +140,17 @@ def test_search_results_url_replaced_with_activity_permalink():
     assert drafts[0].source_url == (
         "https://www.linkedin.com/feed/update/urn:li:activity:7123456789012345678/"
     )
+    assert drafts[0].signals.get("post_url") == drafts[0].source_url
+
+
+def test_canonicalize_prefers_posts_slug_over_feed_urn():
+    url = canonicalize_post_url(
+        job_url="https://www.linkedin.com/feed/update/urn:li:activity:7123456789012345678/",
+        detail_payload={
+            "post_url": "https://www.linkedin.com/posts/alex-rivera-activity-7123456789012345678-abc"
+        },
+    )
+    assert url == "https://www.linkedin.com/posts/alex-rivera-activity-7123456789012345678-abc/"
 
 
 def test_feed_post_header_fills_author_and_posted_when_payload_author_missing():
@@ -160,7 +171,129 @@ def test_feed_post_header_fills_author_and_posted_when_payload_author_missing():
     assert d.name == "Muhammad Zubair"
     assert "Customer Experience" in (d.position or "")
     assert d.signals.get("posted_at_text") == "2h"
-    assert "Muhammad Zubair" in (d.signals.get("post_body") or "")
+    body_out = d.signals.get("post_body") or ""
+    assert "mz0340091@gmail.com" in body_out
+    assert "• 2nd" not in body_out  # actor chrome stripped from View post body
+
+
+def test_header_without_feed_post_prefix_and_rejects_junk_near_email_name():
+    body = (
+        "Abbas • 2nd Strategic HR Leader | Driving Workforce Transformation Across "
+        "Middle East & US audiences 8h · Visible to anyone on or off LinkedIn "
+        "Working Hours: 3:00 PM – 12:00 AM Apply ayeshaasim@businessupscalers.com"
+    )
+    drafts = extract_from_job(
+        title="LinkedIn post",
+        company="US",
+        location="",
+        job_url="https://www.linkedin.com/posts/abbas-activity-8555555555555555555-abc/",
+        list_payload={"kind": "post", "author": "", "subtitle": ""},
+        detail_payload={"kind": "post", "author": "", "description": body},
+        linkedin_job_id="p8555555555555555555",
+    )
+    d = next(x for x in drafts if x.email == "ayeshaasim@businessupscalers.com")
+    assert d.name == "Abbas"
+    assert "Strategic HR Leader" in (d.position or "")
+    assert d.signals.get("posted_at_text") == "8h"
+    assert d.company == ""  # junk "US" must not stick
+    assert d.name.lower() != "working hours"
+
+
+def test_full_name_and_company_from_at_headline():
+    body = (
+        "Fatima Khan • 2nd Founder & CEO @ Databiqs 2h Follow "
+        "Hiring in Lahore — email hr@databiqs.com today"
+    )
+    drafts = extract_from_job(
+        title="Khan",
+        company="Founder & CEO @ Databiqs",
+        location="",
+        job_url="https://www.linkedin.com/posts/fatima-khan-activity-8666666666666666666-abc/",
+        list_payload={
+            "kind": "post",
+            "author": "Khan",
+            "subtitle": "Founder & CEO @ Databiqs",
+        },
+        detail_payload={
+            "kind": "post",
+            "author": "Khan",
+            "subtitle": "Founder & CEO @ Databiqs",
+            "description": body,
+        },
+        linkedin_job_id="p8666666666666666666",
+    )
+    d = next(x for x in drafts if x.email == "hr@databiqs.com")
+    assert d.name == "Fatima Khan"
+    assert d.position == "Founder & CEO @ Databiqs"
+    assert d.company == "Databiqs"
+
+
+def test_bizscale_company_not_phrase_and_name_from_posts_url():
+    body = (
+        "We're looking for a talented SEO CONTENT WRITER to join our growing team at BIZSCALE! "
+        "Send CV to ayeshaasim@businessupscalers.com"
+    )
+    drafts = extract_from_job(
+        title="LinkedIn post",
+        company="our growing team at BIZSCA",
+        location="",
+        job_url="https://www.linkedin.com/posts/ayesha-sibtain-abbas-activity-8888888888888888888-AbCd/",
+        list_payload={"kind": "post", "author": "", "subtitle": "", "posted_at_text": ""},
+        detail_payload={
+            "kind": "post",
+            "author": "",
+            "subtitle": "",
+            "description": body,
+        },
+        linkedin_job_id="p8888888888888888888",
+    )
+    d = next(x for x in drafts if x.email == "ayeshaasim@businessupscalers.com")
+    assert d.name == "Ayesha Sibtain Abbas"
+    assert d.company == "BIZSCALE"
+    assert "growing team" not in (d.company or "").lower()
+
+
+def test_strips_header_chrome_and_company_from_hiring_at_body():
+    mashed = (
+        "Ehsan • 2nd HR Executive & Talent Acquisition Specialist | Full-Cycle IT Recruitment | "
+        "LinkedIn Headhunting | HRIS & HR Ops | Open to Remote 7h Connect Hiring at TechPrysm! "
+        "Location: DHA Phase 8, Lahore Apply at: careers@techprysm.com … more 56 11 4"
+    )
+    drafts = extract_from_job(
+        title="Ehsan",
+        company="",
+        location="",
+        job_url="https://www.linkedin.com/posts/halima-ehsan-activity-8777777777777777777-AbCd/",
+        list_payload={
+            "kind": "post",
+            "author": "Ehsan",
+            "subtitle": (
+                "HR Executive & Talent Acquisition Specialist | Full-Cycle IT Recruitment | "
+                "LinkedIn Headhunting | HRIS & HR Ops | Open to Remote"
+            ),
+            "posted_at_text": "7h",
+        },
+        detail_payload={
+            "kind": "post",
+            "author": "Halima Ehsan",
+            "subtitle": (
+                "HR Executive & Talent Acquisition Specialist | Full-Cycle IT Recruitment | "
+                "LinkedIn Headhunting | HRIS & HR Ops | Open to Remote"
+            ),
+            "posted_at_text": "7h",
+            "description": mashed,
+        },
+        linkedin_job_id="p8777777777777777777",
+    )
+    d = next(x for x in drafts if x.email == "careers@techprysm.com")
+    assert d.name == "Halima Ehsan"
+    assert d.company == "TechPrysm"
+    assert "HR Executive" in (d.position or "")
+    body = d.signals.get("post_body") or ""
+    assert body.startswith("Hiring at TechPrysm!")
+    assert "• 2nd" not in body
+    assert "7h Connect" not in body
+    assert "56 11 4" not in body
 
 
 def test_post_maps_designation_date_and_full_body_into_candidate():

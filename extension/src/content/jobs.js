@@ -147,10 +147,13 @@
         const stillMissing = [];
         for (const email of missing) {
           const card = posts.findCardForEmail?.(document, email);
-          const fromCard = card ? posts.cardToPost?.(card, location.origin) : null;
+          const fromCard = card
+            ? posts.cardToPost?.(card, location.origin, { email })
+            : null;
           if (fromCard) {
             const desc = fromCard.detail_payload?.description || "";
             if (!desc.toLowerCase().includes(email.toLowerCase())) {
+              // Keep body scoped to this post — append email only, never page mashup.
               fromCard.detail_payload.description = `${desc}\n${email}`.slice(0, 20000);
               fromCard.list_payload.preview = fromCard.detail_payload.description.slice(0, 280);
             }
@@ -170,12 +173,18 @@
               keywords,
               urlForEmail: (email) => {
                 const card = posts.findCardForEmail?.(document, email);
-                if (!card || !posts.postUrl) return "";
-                const url = posts.postUrl(card, location.origin);
+                if (!card) return "";
+                const resolve = posts.resolvePostPermalink || posts.postUrl;
+                if (!resolve) return "";
+                const url = resolve(card, location.origin);
                 return url && !posts.isSearchOrListUrl?.(url) ? url : "";
               },
               metaForEmail: (email) => {
                 // Last resort: still attach surrounding page text so View post isn't email-only.
+                const card = posts.findCardForEmail?.(document, email);
+                const resolve = posts.resolvePostPermalink || posts.postUrl;
+                const job_url =
+                  card && resolve ? resolve(card, location.origin) || "" : "";
                 const windowText = posts.textWindowAroundEmail?.(document, email, 1000) || "";
                 const lines = windowText
                   .split(/\n+/)
@@ -197,11 +206,24 @@
                   author: authorGuess,
                   subtitle: subtitleGuess,
                   description: windowText || email,
+                  job_url: job_url && !posts.isSearchOrListUrl?.(job_url) ? job_url : "",
                 };
               },
             })
           );
         }
+      }
+    }
+
+    // Guarantee: every captured post carries its openable permalink when URN/link exists in DOM.
+    for (const item of items) {
+      if (item.job_url && !posts.isSearchOrListUrl?.(item.job_url)) continue;
+      const urn = item.list_payload?.urn || item.detail_payload?.urn || "";
+      const fromUrn = urn && posts.urlFromActivityUrn ? posts.urlFromActivityUrn(urn) : "";
+      if (fromUrn) {
+        item.job_url = fromUrn;
+        if (item.detail_payload) item.detail_payload.post_url = fromUrn;
+        if (item.list_payload && !item.list_payload.urn) item.list_payload.urn = urn;
       }
     }
 

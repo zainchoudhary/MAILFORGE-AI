@@ -12,6 +12,15 @@ import {
   findCardForEmail,
   parseFeedPostHeader,
   cleanAuthor,
+  preferAuthor,
+  companyFromSubtitle,
+  companyFromBody,
+  authorFromProfileHref,
+  stripPostChrome,
+  resolvePostPermalink,
+  closestPostContainer,
+  isolatePostSegment,
+  postBody,
 } from "../src/lib/posts.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -62,7 +71,7 @@ assert.match(feedPosts[0].detail_payload.description, /alex\.rivera@northwind\.t
 assert.equal(feedPosts[0].title, "Alex Rivera");
 assert.equal(
   feedPosts[0].job_url,
-  "https://www.linkedin.com/feed/update/urn:li:activity:7123456789012345678/"
+  "https://www.linkedin.com/posts/alex-rivera-activity-7123456789012345678-abc/"
 );
 assert.match(feedPosts[1].detail_payload.description, /careers@orbitlabs\.example/);
 assert.equal(
@@ -75,7 +84,7 @@ assert.equal(feedPosts[0].list_payload.posted_at, "2026-11-08T14:30:00.000Z");
 assert.equal(feedPosts[0].list_payload.posted_at_text, "1d");
 assert.match(feedPosts[0].detail_payload.description, /Full JD: Python/);
 assert.equal(feedPosts[0].detail_payload.posted_at, "2026-11-08T14:30:00.000Z");
-assert.equal(feedPosts[0].company, "Hiring Manager at Northwind");
+assert.equal(feedPosts[0].company, "Northwind");
 
 const card = feedDoc.querySelector('[data-urn="urn:li:activity:7123456789012345678"]');
 const found = findCardForEmail(feedDoc, "alex.rivera@northwind.test");
@@ -95,6 +104,10 @@ assert.ok(ayesha, "email post from chameleon wrapper");
 assert.equal(ayesha.list_payload.author, "Ayesha Asim");
 assert.match(ayesha.list_payload.subtitle, /Business Upscalers/i);
 assert.equal(ayesha.list_payload.posted_at_text, "2d");
+assert.equal(
+  ayesha.job_url,
+  "https://www.linkedin.com/posts/ayesha-asim-activity-8111111111111111111-AbCd/"
+);
 
 const viaWalk = findCardForEmail(looseDoc, "careers@hytgenx.ai");
 assert.ok(viaWalk, "TreeWalker must find card for careers@hytgenx.ai");
@@ -108,8 +121,123 @@ const header = parseFeedPostHeader(
 assert.equal(header.author, "Muhammad Zubair");
 assert.match(header.subtitle, /Customer Experience/);
 assert.equal(header.posted_at_text, "2h");
+const headerLoose = parseFeedPostHeader(
+  "Abbas • 2nd Strategic HR Leader | Driving Workforce Transformation 8h · Visible to anyone"
+);
+assert.equal(headerLoose.author, "Abbas");
+assert.match(headerLoose.subtitle, /Strategic HR Leader/);
+assert.equal(headerLoose.posted_at_text, "8h");
+const fatima = parseFeedPostHeader(
+  "Noise before Fatima Khan • 2nd Talent Lead at Acme Corp 3h Follow Hiring now"
+);
+assert.equal(fatima.author, "Fatima Khan");
+assert.equal(preferAuthor("Khan", "Fatima Khan"), "Fatima Khan");
+assert.equal(companyFromSubtitle("Founder & CEO @ Databiqs"), "Databiqs");
+assert.equal(companyFromSubtitle("Hiring Manager at Northwind"), "Northwind");
+assert.equal(companyFromSubtitle("Strategic HR Leader | Driving change"), "");
 assert.equal(cleanAuthor("View Fatima Khawaja’s profile"), "Fatima Khawaja");
 assert.equal(cleanAuthor("Live Demos"), "");
 assert.equal(cleanAuthor("Working Hours"), "");
+assert.equal(cleanAuthor("Lahore Location"), "");
 
-console.log("parser tests passed (jobs + link fallback + feed posts)");
+// Nested commentary: email text has no urn/link; parent card does — must still bind permalink.
+const nestedHtml = readFileSync(join(here, "../fixtures/content-search-nested-email.html"), "utf8");
+const { document: nestedDoc } = parseHTML(nestedHtml);
+const emailNode = [...nestedDoc.querySelectorAll("span")].find((el) =>
+  /hr@databiqs\.com/i.test(el.textContent || "")
+);
+assert.ok(emailNode, "nested email text node");
+const climbed = closestPostContainer(emailNode);
+assert.ok(climbed, "closestPostContainer from email text");
+assert.match(climbed.getAttribute("data-chameleon-result-urn") || "", /8333333333333333333/);
+assert.equal(
+  resolvePostPermalink(emailNode, "https://www.linkedin.com"),
+  "https://www.linkedin.com/posts/jaffar-ali-activity-8333333333333333333-XyZ9/"
+);
+const nestedCard = findCardForEmail(nestedDoc, "hr@databiqs.com");
+assert.ok(nestedCard, "findCardForEmail must find nested email post");
+const nestedPost = cardToPost(nestedCard, "https://www.linkedin.com");
+assert.ok(nestedPost, "cardToPost for nested email");
+assert.equal(
+  nestedPost.job_url,
+  "https://www.linkedin.com/posts/jaffar-ali-activity-8333333333333333333-XyZ9/"
+);
+assert.equal(nestedPost.detail_payload.post_url, nestedPost.job_url);
+assert.match(nestedPost.detail_payload.description, /hr@databiqs\.com/i);
+
+// Multi-post mashup: body must stay on the email's own post, not siblings.
+const mashed =
+  "Feed post Faisalabad Education • 1st Hiring locally 2h Follow Need a salesman — WhatsApp only. " +
+  "Feed post Verena Distler • 3rd+ Assistant Professor | HCI 3d Follow " +
+  "I am recruiting a PhD student at Aalto University! Interested: reach hr@deepailogics.com today.";
+const isolated = isolatePostSegment(mashed, "hr@deepailogics.com");
+assert.match(isolated, /Verena Distler/);
+assert.match(isolated, /hr@deepailogics\.com/);
+assert.doesNotMatch(isolated, /Faisalabad Education|WhatsApp only/i);
+
+const mashHtml = `<!doctype html><html><body>
+  <div data-chameleon-result-urn="urn:li:activity:8444444444444444444" class="search-results-container">
+    <div class="update-components-text break-words">Salesman role in Faisalabad. Contact local office.</div>
+    <div class="update-components-text break-words">PhD opening — email hr@deepailogics.com for the Aalto role.</div>
+  </div>
+</body></html>`;
+const { document: mashDoc } = parseHTML(mashHtml);
+const mashCard = mashDoc.querySelector("[data-chameleon-result-urn]");
+const mashBody = postBody(mashCard, { email: "hr@deepailogics.com" });
+assert.match(mashBody, /hr@deepailogics\.com/);
+assert.doesNotMatch(mashBody, /Salesman role in Faisalabad/i);
+const mashPost = cardToPost(mashCard, "https://www.linkedin.com", { email: "hr@deepailogics.com" });
+assert.match(mashPost.detail_payload.description, /hr@deepailogics\.com/);
+assert.doesNotMatch(mashPost.detail_payload.description, /Salesman role in Faisalabad/i);
+
+// Halima Ehsan / TechPrysm: full name from profile, company from body, chrome-free body.
+assert.equal(authorFromProfileHref("/in/halima-ehsan-123456789/"), "Halima Ehsan");
+assert.equal(companyFromBody("Hiring at TechPrysm! Location: DHA Phase 8"), "TechPrysm");
+assert.equal(companyFromBody("Join Acme Robotics — we're growing"), "Acme Robotics");
+assert.equal(
+  companyFromBody(
+    "We're looking for a talented SEO CONTENT WRITER to join our growing team at BIZSCALE! Location: Lahore"
+  ),
+  "BIZSCALE"
+);
+assert.equal(authorFromProfileHref("/posts/ayesha-sibtain-abbas-activity-8888888888888888888-AbCd/"), "Ayesha Sibtain Abbas");
+const chromeBody =
+  "Ehsan • 2nd HR Executive & Talent Acquisition Specialist | Full-Cycle IT Recruitment | " +
+  "LinkedIn Headhunting | HRIS & HR Ops | Open to Remote 7h Connect Hiring at TechPrysm! " +
+  "Apply at: careers@techprysm.com … more 56 11 4";
+const cleaned = stripPostChrome(chromeBody);
+assert.match(cleaned, /^Hiring at TechPrysm!/);
+assert.doesNotMatch(cleaned, /•\s*2nd|^\s*Ehsan\b|7h Connect|… more|56 11 4/i);
+assert.equal(companyFromBody(cleaned), "TechPrysm");
+
+const halimaHtml = readFileSync(join(here, "../fixtures/content-search-halima-techprysm.html"), "utf8");
+const { document: halimaDoc } = parseHTML(halimaHtml);
+const halimaCard = findCardForEmail(halimaDoc, "careers@techprysm.com");
+assert.ok(halimaCard, "Halima TechPrysm card");
+const halima = cardToPost(halimaCard, "https://www.linkedin.com", { email: "careers@techprysm.com" });
+assert.ok(halima, "cardToPost Halima");
+assert.equal(halima.list_payload.author, "Halima Ehsan");
+assert.equal(halima.company, "TechPrysm");
+assert.match(halima.list_payload.subtitle, /HR Executive & Talent Acquisition Specialist/);
+assert.match(halima.detail_payload.description, /^Hiring at TechPrysm!/);
+assert.doesNotMatch(halima.detail_payload.description, /•\s*2nd|7h Connect|… more|56 11 4/i);
+assert.match(halima.detail_payload.description, /careers@techprysm\.com/i);
+
+const ayeshaHtml = readFileSync(join(here, "../fixtures/content-search-ayesha-bizscale.html"), "utf8");
+const { document: ayeshaDoc } = parseHTML(ayeshaHtml);
+const ayeshaCard = findCardForEmail(ayeshaDoc, "ayeshaasim@businessupscalers.com");
+assert.ok(ayeshaCard, "Ayesha BIZSCALE card");
+assert.match(ayeshaCard.getAttribute("data-chameleon-result-urn") || "", /8888888888888888888/);
+const ayeshaPost = cardToPost(ayeshaCard, "https://www.linkedin.com", {
+  email: "ayeshaasim@businessupscalers.com",
+});
+assert.ok(ayeshaPost, "cardToPost Ayesha");
+assert.equal(ayeshaPost.list_payload.author, "Ayesha Sibtain Abbas");
+assert.match(ayeshaPost.list_payload.subtitle, /Strategic HR Leader/);
+assert.equal(ayeshaPost.list_payload.posted_at_text, "6h");
+assert.equal(ayeshaPost.company, "BIZSCALE");
+assert.doesNotMatch(ayeshaPost.company, /growing|team|our/i);
+assert.match(ayeshaPost.detail_payload.description, /SEO CONTENT WRITER/i);
+assert.match(ayeshaPost.detail_payload.description, /ayeshaasim@businessupscalers\.com/i);
+
+console.log("parser tests passed (jobs + link fallback + feed posts + nested permalink + body isolate)");

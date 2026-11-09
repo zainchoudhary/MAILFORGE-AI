@@ -3571,6 +3571,30 @@ td select:not([multiple]) {
 }
 .lead-post-meta a { color: var(--blue, #3b6ef5); }
 .lead-post-body { margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; font-size: 12px; line-height: 1.45; color: var(--muted); }
+.lead-post-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.lead-go-post {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 9px;
+  color: #1d4ed8;
+  background: #eff6ff;
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: none;
+  transition: background .15s ease, border-color .15s ease;
+}
+.lead-go-post:hover {
+  border-color: #93c5fd;
+  background: #dbeafe;
+}
 .lead-runs h2 { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .lead-run-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
 .lead-run-select-all { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }

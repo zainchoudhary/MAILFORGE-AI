@@ -41,6 +41,17 @@ function postBody(candidate) {
   return signals.post_body || candidate?.snippet || '';
 }
 
+/** Permalink for the LinkedIn post this lead came from (never the search-results page). */
+function postUrl(candidate) {
+  const signals = candidate?.signals || {};
+  const raw = String(candidate?.source_url || signals.post_url || '').trim();
+  if (!raw) return '';
+  // Hide search-result / junk links so "Go to post" never opens a dead page by mistake.
+  if (/\/search\/results\//i.test(raw) || /\/jobs\/search/i.test(raw)) return '';
+  if (!/linkedin\.com\/(?:posts\/|feed\/update\/)/i.test(raw)) return '';
+  return raw;
+}
+
 function CandidateRow({ runId, candidate, onChanged, onSelect }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState({ name: candidate.name, company: candidate.company, position: candidate.position });
@@ -88,6 +99,7 @@ function CandidateRow({ runId, candidate, onChanged, onSelect }) {
   );
   const when = postedLabel(candidate);
   const body = postBody(candidate);
+  const url = postUrl(candidate);
   return (
     <>
       <tr className={candidate.selected ? 'lead-row selected' : 'lead-row'}>
@@ -108,11 +120,19 @@ function CandidateRow({ runId, candidate, onChanged, onSelect }) {
         <td>{cell('position', 'Designation')}</td>
         <td className="lead-posted">{when || '—'}</td>
         <td>
-          {candidate.source_url ? (
-            <a className="lead-source" href={candidate.source_url} target="_blank" rel="noopener noreferrer" title={candidate.source_title || candidate.source_url}>
-              <ExternalLink size={13} /> Post
+          {url ? (
+            <a
+              className="lead-source"
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={candidate.source_title || url}
+            >
+              <ExternalLink size={13} /> Go to post
             </a>
-          ) : <small>—</small>}
+          ) : (
+            <small>—</small>
+          )}
         </td>
         <td>
           <Button
@@ -134,16 +154,16 @@ function CandidateRow({ runId, candidate, onChanged, onSelect }) {
               <div><strong>Poster:</strong> {candidate.name || '—'}</div>
               <div><strong>Designation:</strong> {candidate.position || '—'}</div>
               <div><strong>Posted:</strong> {when || '—'}</div>
-              {candidate.source_url ? (
-                <div>
-                  <strong>Link:</strong>{' '}
-                  <a href={candidate.source_url} target="_blank" rel="noopener noreferrer">
-                    Open on LinkedIn
-                  </a>
-                </div>
-              ) : null}
             </div>
             <div className="lead-post-body">{body || 'No post text saved for this lead. Run a fresh Collect after reloading the extension.'}</div>
+            {url ? (
+              <div className="lead-post-actions">
+                <a className="lead-go-post" href={url} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink size={14} />
+                  Go to post
+                </a>
+              </div>
+            ) : null}
           </td>
         </tr>
       )}

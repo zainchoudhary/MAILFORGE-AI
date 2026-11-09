@@ -129,7 +129,7 @@ def list_candidates(
     db: Session, user, run_id: str, page_number: int = 1, limit: int = 100
 ) -> dict:
     owned(db, LinkedInCaptureRun, run_id, user.organization_id)
-    return page(
+    result = page(
         db,
         LinkedInLeadCandidate,
         user.organization_id,
@@ -138,6 +138,47 @@ def list_candidates(
         [LinkedInLeadCandidate.run_id == run_id],
         order=(LinkedInLeadCandidate.score.desc(), LinkedInLeadCandidate.email),
     )
+    _enrich_candidate_post_urls(db, result.get("items") or [])
+    return result
+
+
+def _enrich_candidate_post_urls(db: Session, items: list[dict]) -> None:
+    """Fill missing source_url from the linked job so View post can open the real permalink."""
+    from app.linkedin_capture.extract import canonicalize_post_url
+
+    need_ids = [
+        item["job_raw_id"]
+        for item in items
+        if item.get("job_raw_id")
+        and not (item.get("source_url") or "").strip()
+        and not ((item.get("signals") or {}).get("post_url") or "").strip()
+    ]
+    if not need_ids:
+        return
+    jobs = {
+        job.id: job
+        for job in db.scalars(select(LinkedInJobRaw).where(LinkedInJobRaw.id.in_(need_ids)))
+    }
+    for item in items:
+        if (item.get("source_url") or "").strip() or ((item.get("signals") or {}).get("post_url") or "").strip():
+            if not (item.get("source_url") or "").strip():
+                item["source_url"] = (item.get("signals") or {}).get("post_url") or ""
+            continue
+        job = jobs.get(item.get("job_raw_id"))
+        if not job:
+            continue
+        url = canonicalize_post_url(
+            job_url=job.job_url or "",
+            linkedin_job_id=job.linkedin_job_id or "",
+            list_payload=job.list_payload if isinstance(job.list_payload, dict) else {},
+            detail_payload=job.detail_payload if isinstance(job.detail_payload, dict) else {},
+        )
+        if not url:
+            continue
+        item["source_url"] = url
+        signals = dict(item.get("signals") or {})
+        signals["post_url"] = url
+        item["signals"] = signals
 
 
 # ----------------------------------------------------------------------- lifecycle
@@ -529,6 +570,21 @@ def _upsert_candidate(db: Session, run: LinkedInCaptureRun, job: LinkedInJobRaw,
         if user_edited:
             merged_signals["user_edited"] = user_edited
         existing.signals = merged_signals
+    # Fill missing permalinks, and upgrade weak feed/update URNs to /posts/ slugs.
+    new_url = (values.get("source_url") or "").strip()
+    old_url = (existing.source_url or "").strip()
+    better_url = bool(new_url) and (
+        not old_url
+        or ("/posts/" in new_url.lower() and "/posts/" not in old_url.lower())
+    )
+    if better_url:
+        existing.source_url = new_url
+        existing.job_raw_id = job.id
+        merged = {**(existing.signals or {}), **signals}
+        merged["post_url"] = new_url
+        if user_edited:
+            merged["user_edited"] = user_edited
+        existing.signals = merged
     db.flush()
     return "updated"
 
