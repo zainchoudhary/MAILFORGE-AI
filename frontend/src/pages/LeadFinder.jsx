@@ -1,23 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Ban, CheckCircle2, ExternalLink, FolderPlus, History, Plus, Search, Sparkles } from 'lucide-react';
+import { Ban, CheckCircle2, ExternalLink, FolderPlus, Plus } from 'lucide-react';
 import { useApi, useAction } from '../hooks/useApi';
 import { errorText } from '../services/api';
 import {
-  EXAMPLE_PROMPTS,
   cancelRun,
   continueRun,
   isRunActive,
-  parseTargetCount,
   patchCandidate,
   progressLine,
   progressPercent,
   saveGroup,
   saveResultSummary,
   setCandidatesSelected,
-  startRun,
 } from '../services/leadFinder';
 import { BusyButton, Empty, Field, PageHeader, QueryState, Status } from '../components/Common';
 import { Button } from '../components/ui/button';
@@ -102,14 +99,11 @@ function CandidateRow({ runId, candidate, onChanged, onSelect }) {
 
 export default function LeadFinder() {
   const client = useQueryClient();
-  const [instruction, setInstruction] = useState('');
-  const [targetCount, setTargetCount] = useState('');
-  const [activeId, setActiveId] = useState(null);
+  const { runId: activeId } = useParams();
   const [saveOpen, setSaveOpen] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [saved, setSaved] = useState(null);
 
-  const runs = useApi(RUNS_KEY, { refetchInterval: (query) => (query.state.data?.items?.some(isRunActive) ? POLL_MS : false) });
   const run = useApi(`${RUNS_KEY}/${activeId}`, {
     enabled: !!activeId,
     refetchInterval: (query) => (isRunActive(query.state.data) ? POLL_MS : false),
@@ -203,13 +197,6 @@ export default function LeadFinder() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
-  const start = useAction(startRun, null, {
-    invalidatePrefixes: [RUNS_KEY],
-    onSuccess: (data) => {
-      setActiveId(data.id);
-      setSaved(null);
-    },
-  });
   const more = useAction(() => continueRun(activeId), 'Searching for more leads', { invalidatePrefixes: [RUNS_KEY] });
   const cancel = useAction(() => cancelRun(activeId), 'Search cancelled — partial leads kept', { invalidatePrefixes: [RUNS_KEY] });
   const save = useAction(() => saveGroup(activeId, groupName.trim()), (data) => `Saved ${saveResultSummary(data)}`, {
@@ -221,76 +208,21 @@ export default function LeadFinder() {
     },
   });
 
-  const submit = (event) => {
-    event.preventDefault();
-    if (instruction.trim().length < 3) return;
-    start.mutate({ instruction: instruction.trim(), target_count: parseTargetCount(targetCount) });
-  };
-
-  const openRun = (id) => {
-    setActiveId(id);
-    setSaved(null);
-  };
+  if (!activeId) {
+    return <Navigate to="/lead-finder/gmail" replace />;
+  }
 
   return (
     <>
       <PageHeader
-        eyebrow="AUDIENCE WORKSPACE"
-        title="Google Search"
-        description="Describe the recruiters you want to reach. We search public pages for contact emails, then you review and edit every lead before saving."
+        eyebrow="OUTREACH INTELLIGENCE"
+        title={runData?.instruction || 'Google search'}
+        description="Review leads from this search, then save a recipient group."
+        backTo="/lead-finder/gmail"
+        backLabel="Back to searches"
       />
-      <section className="panel lead-start">
-        <form onSubmit={submit}>
-          <div className="lead-start-grid">
-            <Field label="Who are you looking for?" required>
-              <textarea
-                rows={5}
-                maxLength={4000}
-                value={instruction}
-                onChange={(event) => setInstruction(event.target.value)}
-                placeholder="e.g. Find 20 technical recruiters in Berlin hiring backend engineers"
-              />
-            </Field>
-            <Field label="Target leads">
-              <input
-                type="number"
-                min={1}
-                max={100}
-                inputMode="numeric"
-                value={targetCount}
-                onChange={(event) => setTargetCount(event.target.value)}
-                placeholder="20"
-              />
-            </Field>
-          </div>
-          <div className="lead-start-actions">
-            <small>Only publicly listed business emails are collected. Generic and no-reply inboxes are skipped.</small>
-            <BusyButton type="submit" busy={start.isPending} disabled={instruction.trim().length < 3}>
-              <Search size={16} /> Find leads
-            </BusyButton>
-          </div>
-        </form>
-      </section>
 
-      <div className="lead-layout">
-        <div className="lead-main">
-          {!activeId ? (
-            <section className="panel">
-              <Empty
-                title="Start your first lead search"
-                description="Describe the role, location and industry. Try one of these to begin:"
-                action={(
-                  <div className="lead-examples">
-                    {EXAMPLE_PROMPTS.map((prompt) => (
-                      <Button key={prompt} type="button" variant="secondary" size="sm" onClick={() => setInstruction(prompt)}>
-                        <Sparkles size={14} /> {prompt}
-                      </Button>
-                    ))}
-                  </div>
-                )}
-              />
-            </section>
-          ) : (
+      <div className="lead-detail">
             <section className="panel">
               <QueryState query={run}>
                 {() => (
@@ -400,26 +332,6 @@ export default function LeadFinder() {
                 )}
               </QueryState>
             </section>
-          )}
-        </div>
-
-        <aside className="panel lead-runs" aria-label="Recent searches">
-          <div className="panel-heading"><div><h2><History size={14} /> Recent searches</h2></div></div>
-          <QueryState query={runs}>
-            {(data) => data.items.length ? (
-              <ul className="lead-run-list">
-                {data.items.map((item) => (
-                  <li key={item.id}>
-                    <button type="button" className={item.id === activeId ? 'active' : ''} onClick={() => openRun(item.id)}>
-                      <strong>{item.instruction}</strong>
-                      <span><StatusBadge status={item.status} /><small>{item.candidate_count} leads</small></span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="lead-runs-empty">No searches yet.</p>}
-          </QueryState>
-        </aside>
       </div>
 
       <Dialog open={saveOpen} onOpenChange={setSaveOpen} busy={save.isPending} title="Save as recipient group" description="Selected leads are added to your recipients and grouped for campaigns.">

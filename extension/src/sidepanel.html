@@ -1,20 +1,82 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
     <title>Outreach Studio</title>
     <style>
-      :root {
+      :root,
+      html[data-theme="dark"] {
+        color-scheme: dark;
         --bg: #090e1a;
+        --bg-glow-a: rgba(88, 214, 204, 0.16);
+        --bg-glow-b: rgba(114, 152, 255, 0.16);
         --panel: #101827;
+        --panel-grad-a: rgba(22, 36, 56, 0.98);
+        --panel-grad-b: rgba(12, 18, 32, 0.98);
         --ink: #e7edf8;
         --muted: #8391aa;
         --line: #222e43;
+        --field: #0b1220;
+        --field-soft: rgba(11, 18, 32, 0.65);
         --blue: #7298ff;
         --cyan: #58d6cc;
         --danger: #f87171;
         --ok: #34d399;
+        --primary-ink: #061018;
+        --shadow: rgba(0, 0, 0, 0.28);
+        --meter-track: rgba(34, 46, 67, 0.9);
+        --progress-bg: rgba(88, 214, 204, 0.08);
+        --progress-line: rgba(88, 214, 204, 0.18);
+        --studio-bg: rgba(114, 152, 255, 0.1);
+        --studio-line: rgba(114, 152, 255, 0.35);
+        --studio-hover: #a5c0ff;
+        --tip-bg: rgba(88, 214, 204, 0.08);
+        --tip-line: rgba(88, 214, 204, 0.14);
+        --toggle-bg: rgba(255, 255, 255, 0.04);
+        --toggle-ink: #c7d7ff;
+        --toggle-border: rgba(147, 197, 253, 0.18);
+        --toggle-hover-bg: rgba(100, 136, 246, 0.14);
+        --card-sheen: linear-gradient(90deg, transparent, rgba(88, 214, 204, 0.45), rgba(114, 152, 255, 0.35), transparent);
+        --avatar-grad: linear-gradient(145deg, rgba(88, 214, 204, 0.25), rgba(114, 152, 255, 0.3));
+        --brand-ring: rgba(88, 214, 204, 0.2);
       }
+
+      html[data-theme="light"] {
+        color-scheme: light;
+        --bg: #f4f7fc;
+        --bg-glow-a: rgba(45, 212, 191, 0.14);
+        --bg-glow-b: rgba(114, 152, 255, 0.14);
+        --panel: #ffffff;
+        --panel-grad-a: #ffffff;
+        --panel-grad-b: #f7faff;
+        --ink: #152238;
+        --muted: #5b6b86;
+        --line: #d7e0ef;
+        --field: #ffffff;
+        --field-soft: #f3f6fb;
+        --blue: #3b6ef5;
+        --cyan: #0f9f94;
+        --danger: #dc2626;
+        --ok: #059669;
+        --primary-ink: #061018;
+        --shadow: rgba(21, 34, 56, 0.08);
+        --meter-track: #e4ebf6;
+        --progress-bg: rgba(15, 159, 148, 0.08);
+        --progress-line: rgba(15, 159, 148, 0.18);
+        --studio-bg: rgba(59, 110, 245, 0.08);
+        --studio-line: rgba(59, 110, 245, 0.28);
+        --studio-hover: #2f5de0;
+        --tip-bg: rgba(15, 159, 148, 0.07);
+        --tip-line: rgba(15, 159, 148, 0.16);
+        --toggle-bg: rgba(21, 34, 56, 0.04);
+        --toggle-ink: #3b4d6b;
+        --toggle-border: rgba(21, 34, 56, 0.12);
+        --toggle-hover-bg: rgba(59, 110, 245, 0.1);
+        --card-sheen: linear-gradient(90deg, transparent, rgba(15, 159, 148, 0.35), rgba(59, 110, 245, 0.28), transparent);
+        --avatar-grad: linear-gradient(145deg, rgba(15, 159, 148, 0.18), rgba(59, 110, 245, 0.22));
+        --brand-ring: rgba(15, 159, 148, 0.22);
+      }
+
       * { box-sizing: border-box; }
       body {
         margin: 0;
@@ -23,8 +85,8 @@
         color: var(--ink);
         font: 13px/1.45 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         background:
-          radial-gradient(120% 70% at 0% -10%, rgba(88, 214, 204, 0.16), transparent 50%),
-          radial-gradient(90% 60% at 110% 0%, rgba(114, 152, 255, 0.16), transparent 45%),
+          radial-gradient(120% 70% at 0% -10%, var(--bg-glow-a), transparent 50%),
+          radial-gradient(90% 60% at 110% 0%, var(--bg-glow-b), transparent 45%),
           var(--bg);
       }
       .brand {
@@ -38,7 +100,11 @@
         height: 36px;
         border-radius: 11px;
         flex-shrink: 0;
-        box-shadow: 0 0 0 1px rgba(88, 214, 204, 0.2), 0 8px 20px rgba(0, 0, 0, 0.35);
+        box-shadow: 0 0 0 1px var(--brand-ring), 0 8px 20px var(--shadow);
+      }
+      .brand-copy {
+        flex: 1;
+        min-width: 0;
       }
       .brand-copy strong {
         display: block;
@@ -52,6 +118,29 @@
         color: var(--muted);
         font-size: 11px;
       }
+      .theme-toggle {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        flex-shrink: 0;
+        border-radius: 10px;
+        border: 1px solid var(--toggle-border);
+        background: var(--toggle-bg);
+        color: var(--toggle-ink);
+        cursor: pointer;
+        transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+      }
+      .theme-toggle:hover {
+        background: var(--toggle-hover-bg);
+        color: var(--ink);
+        border-color: rgba(114, 152, 255, 0.4);
+      }
+      .theme-toggle svg { width: 15px; height: 15px; display: block; }
+      .theme-toggle .icon-moon { display: none; }
+      html[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+      html[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+
       .pills {
         display: flex;
         flex-wrap: wrap;
@@ -65,7 +154,7 @@
         padding: 4px 9px;
         border-radius: 999px;
         border: 1px solid var(--line);
-        background: rgba(16, 24, 39, 0.8);
+        background: var(--field-soft);
         color: var(--muted);
         font-size: 10px;
         font-weight: 600;
@@ -76,25 +165,25 @@
         height: 6px;
         border-radius: 50%;
         background: var(--cyan);
-        box-shadow: 0 0 8px rgba(88, 214, 204, 0.7);
+        box-shadow: 0 0 8px rgba(88, 214, 204, 0.45);
       }
-      .pill.blue .dot { background: var(--blue); box-shadow: 0 0 8px rgba(114, 152, 255, 0.7); }
+      .pill.blue .dot { background: var(--blue); box-shadow: 0 0 8px rgba(114, 152, 255, 0.45); }
       .card {
         position: relative;
         overflow: hidden;
-        background: linear-gradient(165deg, rgba(22, 36, 56, 0.98), rgba(12, 18, 32, 0.98));
+        background: linear-gradient(165deg, var(--panel-grad-a), var(--panel-grad-b));
         border: 1px solid var(--line);
         border-radius: 16px;
         padding: 14px;
         margin-bottom: 12px;
-        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+        box-shadow: 0 12px 32px var(--shadow);
       }
       .card::before {
         content: "";
         position: absolute;
         inset: 0 0 auto;
         height: 1px;
-        background: linear-gradient(90deg, transparent, rgba(88, 214, 204, 0.45), rgba(114, 152, 255, 0.35), transparent);
+        background: var(--card-sheen);
       }
       .card-kicker {
         margin: 0 0 4px;
@@ -130,12 +219,16 @@
         margin-top: 6px;
         border: 1px solid var(--line);
         border-radius: 11px;
-        background: #0b1220;
+        background: var(--field);
         transition: border-color 0.15s, box-shadow 0.15s;
       }
       .field:focus-within {
         border-color: rgba(88, 214, 204, 0.55);
         box-shadow: 0 0 0 3px rgba(88, 214, 204, 0.12);
+      }
+      html[data-theme="light"] .field:focus-within {
+        border-color: rgba(15, 159, 148, 0.55);
+        box-shadow: 0 0 0 3px rgba(15, 159, 148, 0.12);
       }
       .field input {
         width: 100%;
@@ -153,7 +246,7 @@
         border: 0;
         border-radius: 12px;
         background: linear-gradient(135deg, #2dd4bf, #58d6cc 42%, #7298ff);
-        color: #061018;
+        color: var(--primary-ink);
         font: inherit;
         font-weight: 700;
         cursor: pointer;
@@ -167,18 +260,12 @@
         padding: 9px 10px;
         border: 1px solid var(--line);
         border-radius: 11px;
-        background: rgba(11, 18, 32, 0.55);
+        background: var(--field-soft);
         color: var(--ink);
         font: inherit;
         cursor: pointer;
       }
       .ghost:hover { border-color: rgba(88, 214, 204, 0.45); color: var(--cyan); }
-      .ghost.tiny {
-        flex: 0;
-        margin: 0;
-        padding: 6px 10px;
-        font-size: 11px;
-      }
       .row { display: flex; gap: 8px; align-items: center; }
       .account {
         display: flex;
@@ -186,10 +273,10 @@
         justify-content: space-between;
         gap: 10px;
         margin-bottom: 12px;
-        padding: 10px;
+        padding: 10px 12px;
         border-radius: 12px;
         border: 1px solid var(--line);
-        background: rgba(11, 18, 32, 0.65);
+        background: var(--field-soft);
       }
       .account-left { display: flex; align-items: center; gap: 9px; min-width: 0; }
       .avatar {
@@ -199,7 +286,7 @@
         display: grid;
         place-items: center;
         flex-shrink: 0;
-        background: linear-gradient(145deg, rgba(88, 214, 204, 0.25), rgba(114, 152, 255, 0.3));
+        background: var(--avatar-grad);
         color: var(--cyan);
         font-size: 12px;
         font-weight: 800;
@@ -219,6 +306,26 @@
         font-size: 10px;
         font-weight: 650;
       }
+      .sign-out {
+        flex-shrink: 0;
+        margin: 0;
+        padding: 4px 2px;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        cursor: pointer;
+        text-decoration: none;
+        transition: color 0.15s ease;
+      }
+      .sign-out:hover {
+        color: var(--danger);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
       .steps {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -229,7 +336,7 @@
         padding: 8px 8px 9px;
         border-radius: 11px;
         border: 1px solid var(--line);
-        background: rgba(11, 18, 32, 0.55);
+        background: var(--field-soft);
         text-align: center;
       }
       .step b {
@@ -255,7 +362,7 @@
         padding: 10px;
         border-radius: 12px;
         border: 1px solid var(--line);
-        background: rgba(11, 18, 32, 0.7);
+        background: var(--field-soft);
       }
       .stat small {
         display: block;
@@ -281,8 +388,8 @@
         margin-top: 12px;
         padding: 11px 12px;
         border-radius: 12px;
-        background: rgba(88, 214, 204, 0.08);
-        border: 1px solid rgba(88, 214, 204, 0.18);
+        background: var(--progress-bg);
+        border: 1px solid var(--progress-line);
         color: var(--cyan);
         font-weight: 650;
         font-size: 12px;
@@ -291,7 +398,7 @@
         margin-top: 8px;
         height: 6px;
         border-radius: 999px;
-        background: rgba(34, 46, 67, 0.9);
+        background: var(--meter-track);
         overflow: hidden;
       }
       .meter > span {
@@ -318,14 +425,14 @@
         margin-top: 10px;
         padding: 10px 12px;
         border-radius: 11px;
-        border: 1px solid rgba(114, 152, 255, 0.35);
-        background: rgba(114, 152, 255, 0.1);
+        border: 1px solid var(--studio-line);
+        background: var(--studio-bg);
         color: var(--blue);
         font-weight: 700;
         font-size: 12px;
         cursor: pointer;
       }
-      .studio:hover { border-color: var(--blue); color: #a5c0ff; }
+      .studio:hover { border-color: var(--blue); color: var(--studio-hover); }
       .studio.hidden, .hidden { display: none !important; }
       details {
         margin-top: 12px;
@@ -344,8 +451,8 @@
       .tip {
         padding: 5px 8px;
         border-radius: 8px;
-        background: rgba(88, 214, 204, 0.08);
-        border: 1px solid rgba(88, 214, 204, 0.14);
+        background: var(--tip-bg);
+        border: 1px solid var(--tip-line);
         color: var(--muted);
         font-size: 10px;
       }
@@ -365,6 +472,21 @@
         <strong>Outreach <b>Studio</b></strong>
         <span>LinkedIn Capture</span>
       </div>
+      <button
+        type="button"
+        class="theme-toggle"
+        id="themeToggle"
+        aria-label="Switch to light mode"
+        title="Light mode"
+      >
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+        </svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5z" />
+        </svg>
+      </button>
     </div>
     <div class="pills">
       <span class="pill"><span class="dot"></span> Public emails only</span>
@@ -403,7 +525,7 @@
             <span>● Connected</span>
           </div>
         </div>
-        <button class="ghost tiny" id="logoutBtn" type="button">Sign out</button>
+        <button class="sign-out" id="logoutBtn" type="button">Sign out</button>
       </div>
 
       <div class="steps" aria-hidden="true">

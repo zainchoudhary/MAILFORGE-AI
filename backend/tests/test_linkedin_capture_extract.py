@@ -140,3 +140,60 @@ def test_search_results_url_replaced_with_activity_permalink():
     assert drafts[0].source_url == (
         "https://www.linkedin.com/feed/update/urn:li:activity:7123456789012345678/"
     )
+
+
+def test_feed_post_header_fills_author_and_posted_when_payload_author_missing():
+    body = (
+        "Feed post Muhammad Zubair • 2nd Customer Experience & Operations Leader | "
+        "Customer Success 2h Follow Hiring — email mz0340091@gmail.com today"
+    )
+    drafts = extract_from_job(
+        title="LinkedIn post",
+        company="",
+        location="",
+        job_url="https://www.linkedin.com/feed/update/urn:li:activity:8111111111111111111/",
+        list_payload={"kind": "post", "author": ""},
+        detail_payload={"kind": "post", "author": "", "description": body},
+        linkedin_job_id="p8111111111111111111",
+    )
+    d = next(x for x in drafts if x.email == "mz0340091@gmail.com")
+    assert d.name == "Muhammad Zubair"
+    assert "Customer Experience" in (d.position or "")
+    assert d.signals.get("posted_at_text") == "2h"
+    assert "Muhammad Zubair" in (d.signals.get("post_body") or "")
+
+
+def test_post_maps_designation_date_and_full_body_into_candidate():
+    body = (
+        "Hiring backend. Email alex.rivera@northwind.test\n"
+        "Full JD: Python, FastAPI, Postgres. Apply this week."
+    )
+    drafts = extract_from_job(
+        title="Alex Rivera",
+        company="Hiring Manager at Northwind",
+        location="",
+        job_url="https://www.linkedin.com/feed/update/urn:li:activity:7123456789012345678/",
+        list_payload={
+            "kind": "post",
+            "author": "Alex Rivera",
+            "subtitle": "Hiring Manager at Northwind",
+            "posted_at": "2026-11-08T14:30:00.000Z",
+            "posted_at_text": "1d",
+        },
+        detail_payload={
+            "kind": "post",
+            "author": "Alex Rivera",
+            "subtitle": "Hiring Manager at Northwind",
+            "posted_at": "2026-11-08T14:30:00.000Z",
+            "posted_at_text": "1d",
+            "description": body,
+        },
+        linkedin_job_id="p7123456789012345678",
+    )
+    assert len(drafts) >= 1
+    d = next(x for x in drafts if x.email == "alex.rivera@northwind.test")
+    assert d.name == "Alex Rivera"
+    assert d.position == "Hiring Manager at Northwind"
+    assert d.signals.get("posted_at") == "2026-11-08T14:30:00.000Z"
+    assert d.signals.get("posted_at_text") == "1d"
+    assert "Full JD: Python" in (d.signals.get("post_body") or "")

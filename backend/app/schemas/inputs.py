@@ -257,3 +257,7 @@ class LeadFinderSaveGroupInput(Input):
         if not value:
             raise ValueError("Group name is required")
         return value
+
+
+class LeadFinderRunsDeleteInput(Input):
+    run_ids: list[str] = Field(min_length=1, max_length=100)

@@ -7,10 +7,42 @@ const send = (msg) =>
     return r;
   });
 
+const THEME_KEY = "extensionTheme";
+
 let latestStudioUrl = "http://localhost:5173";
 let latestRunId = "";
 let latestEmails = 0;
 let latestItems = 0;
+let currentTheme = "dark";
+
+function applyTheme(theme) {
+  currentTheme = theme === "light" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", currentTheme);
+  const btn = $("themeToggle");
+  if (!btn) return;
+  const toLight = currentTheme === "dark";
+  btn.setAttribute("aria-label", toLight ? "Switch to light mode" : "Switch to dark mode");
+  btn.title = toLight ? "Light mode" : "Dark mode";
+}
+
+async function loadTheme() {
+  try {
+    const { [THEME_KEY]: saved } = await chrome.storage.local.get(THEME_KEY);
+    applyTheme(saved === "light" ? "light" : "dark");
+  } catch {
+    applyTheme("dark");
+  }
+}
+
+async function toggleTheme() {
+  const next = currentTheme === "dark" ? "light" : "dark";
+  applyTheme(next);
+  try {
+    await chrome.storage.local.set({ [THEME_KEY]: next });
+  } catch {
+    /* ignore persist errors */
+  }
+}
 
 function setStatus(text, isError = false) {
   const el = $("status");
@@ -199,8 +231,14 @@ $("studioLink").addEventListener("click", async (event) => {
   }
 });
 
+$("themeToggle").addEventListener("click", () => {
+  toggleTheme().catch(() => {});
+});
+
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "CAPTURE_PROGRESS") renderCapture(msg.capture, latestStudioUrl);
 });
 
-render().catch((e) => setStatus(e.message, true));
+loadTheme()
+  .then(() => render())
+  .catch((e) => setStatus(e.message, true));

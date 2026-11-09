@@ -1,19 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Ban, CheckCircle2, ExternalLink, FolderPlus, History, Mail, Trash2 } from 'lucide-react';
+import { CheckCircle2, ExternalLink, FolderPlus } from 'lucide-react';
 import { useApi, useAction } from '../hooks/useApi';
 import { errorText } from '../services/api';
 import {
   CAPTURE_RUNS_KEY as RUNS_KEY,
-  INSTALL_STEPS,
   PAGE_LIMIT,
-  canCancelRun,
-  cancelRun,
-  deleteRun,
-  deleteRuns,
-  extractRun,
   hasPendingDetails,
   isRunExtracting,
   isRunLive,
@@ -26,16 +20,29 @@ import {
   setCandidatesSelected,
   showingLabel,
 } from '../services/linkedinCapture';
-import { BusyButton, ConfirmDialog, Empty, Field, PageHeader, QueryState, Status } from '../components/Common';
+import { BusyButton, Empty, Field, PageHeader, QueryState, Status } from '../components/Common';
 import { Button } from '../components/ui/button';
 import { Dialog } from '../components/ui/dialog';
 
 const POLL_MS = 3000;
-const RUNS_IDLE_POLL_MS = 15000;
 
 const StatusBadge = ({ status }) => <Status value={status} />;
 
+// Keep in sync with the "Extracted leads" <thead> column count.
+const LEAD_TABLE_COLS = 8;
+
+function postedLabel(candidate) {
+  const signals = candidate?.signals || {};
+  return signals.posted_at_text || signals.posted_at || '';
+}
+
+function postBody(candidate) {
+  const signals = candidate?.signals || {};
+  return signals.post_body || candidate?.snippet || '';
+}
+
 function CandidateRow({ runId, candidate, onChanged, onSelect }) {
+  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState({ name: candidate.name, company: candidate.company, position: candidate.position });
   const [saving, setSaving] = useState(false);
   const dirty = useRef(new Set());
@@ -79,58 +86,87 @@ function CandidateRow({ runId, candidate, onChanged, onSelect }) {
       onKeyDown={(event) => event.key === 'Enter' && event.currentTarget.blur()}
     />
   );
+  const when = postedLabel(candidate);
+  const body = postBody(candidate);
   return (
-    <tr className={candidate.selected ? 'lead-row selected' : 'lead-row'}>
-      <td className="table-check">
-        <input
-          type="checkbox"
-          aria-label={`Select ${candidate.email}`}
-          checked={!!candidate.selected}
-          onChange={(event) => onSelect(candidate.id, event.target.checked)}
-        />
-      </td>
-      <td className="lead-email">
-        <strong>{candidate.email}</strong>
-        {candidate.existing_recipient_id && <small>Already in your recipients</small>}
-      </td>
-      <td>{cell('name', 'Name')}</td>
-      <td>{cell('company', 'Company')}</td>
-      <td>{cell('position', 'Position')}</td>
-      <td>
-        {candidate.source_url ? (
-          <a className="lead-source" href={candidate.source_url} target="_blank" rel="noopener noreferrer" title={candidate.source_title || candidate.source_url}>
-            <ExternalLink size={13} /> Post
-          </a>
-        ) : <small>—</small>}
-      </td>
-    </tr>
+    <>
+      <tr className={candidate.selected ? 'lead-row selected' : 'lead-row'}>
+        <td className="table-check">
+          <input
+            type="checkbox"
+            aria-label={`Select ${candidate.email}`}
+            checked={!!candidate.selected}
+            onChange={(event) => onSelect(candidate.id, event.target.checked)}
+          />
+        </td>
+        <td className="lead-email">
+          <strong>{candidate.email}</strong>
+          {candidate.existing_recipient_id && <small>Already in your recipients</small>}
+        </td>
+        <td>{cell('name', 'Name')}</td>
+        <td>{cell('company', 'Company')}</td>
+        <td>{cell('position', 'Designation')}</td>
+        <td className="lead-posted">{when || '—'}</td>
+        <td>
+          {candidate.source_url ? (
+            <a className="lead-source" href={candidate.source_url} target="_blank" rel="noopener noreferrer" title={candidate.source_title || candidate.source_url}>
+              <ExternalLink size={13} /> Post
+            </a>
+          ) : <small>—</small>}
+        </td>
+        <td>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            aria-expanded={open}
+            aria-label={`${open ? 'Hide' : 'View'} post for ${candidate.email}`}
+            onClick={() => setOpen((value) => !value)}
+          >
+            {open ? 'Hide' : 'View post'}
+          </Button>
+        </td>
+      </tr>
+      {open && (
+        <tr className="lead-post-expand">
+          <td colSpan={LEAD_TABLE_COLS}>
+            <div className="lead-post-meta">
+              <div><strong>Poster:</strong> {candidate.name || '—'}</div>
+              <div><strong>Designation:</strong> {candidate.position || '—'}</div>
+              <div><strong>Posted:</strong> {when || '—'}</div>
+              {candidate.source_url ? (
+                <div>
+                  <strong>Link:</strong>{' '}
+                  <a href={candidate.source_url} target="_blank" rel="noopener noreferrer">
+                    Open on LinkedIn
+                  </a>
+                </div>
+              ) : null}
+            </div>
+            <div className="lead-post-body">{body || 'No post text saved for this lead. Run a fresh Collect after reloading the extension.'}</div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
 export default function LinkedInFinder() {
   const client = useQueryClient();
-  const [params, setParams] = useSearchParams();
-  const [activeId, setActiveId] = useState(() => params.get('run') || null);
+  const navigate = useNavigate();
+  const { runId: routeRunId } = useParams();
+  const [params] = useSearchParams();
+  const legacyRun = params.get('run');
+  const activeId = routeRunId || null;
   const [saveOpen, setSaveOpen] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [saved, setSaved] = useState(null);
-  const [selectedRunIds, setSelectedRunIds] = useState([]);
-  const [deleteTarget, setDeleteTarget] = useState(null); // 'selected' | run object | null
 
   const jobsUrl = `${RUNS_KEY}/${activeId}/jobs?limit=${PAGE_LIMIT}`;
   const candidatesUrl = `${RUNS_KEY}/${activeId}/candidates?limit=${PAGE_LIMIT}`;
   const shouldPoll = (runValue, jobsValue) =>
     isRunLive(runValue) || hasPendingDetails(jobsValue?.items);
 
-  const runs = useApi(RUNS_KEY, {
-    refetchInterval: (query) => {
-      const items = query.state.data?.items;
-      if (items?.some(isRunExtracting)) return POLL_MS;
-      if (activeId) return shouldPoll(client.getQueryData([`${RUNS_KEY}/${activeId}`]), client.getQueryData([jobsUrl])) ? POLL_MS : false;
-      // Empty state: light poll so captures started in the extension show up.
-      return RUNS_IDLE_POLL_MS;
-    },
-  });
   const run = useApi(`${RUNS_KEY}/${activeId}`, {
     enabled: !!activeId,
     refetchInterval: (query) => (shouldPoll(query.state.data, client.getQueryData([jobsUrl])) ? POLL_MS : false),
@@ -147,7 +183,7 @@ export default function LinkedInFinder() {
     retry: (count, error) => (error?.response?.status === 404 ? false : count < 2),
   });
 
-  // Deleted capture still in the URL/state → stop 404 polling.
+  // Deleted / missing capture → return to listing.
   useEffect(() => {
     if (!activeId) return;
     const gone =
@@ -155,14 +191,10 @@ export default function LinkedInFinder() {
       jobs.error?.response?.status === 404 ||
       candidates.error?.response?.status === 404;
     if (!gone) return;
-    setSelectedRunIds((ids) => ids.filter((id) => id !== activeId));
-    openRun(null);
-    // openRun updates URL + activeId; deps intentionally omit it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, run.error, jobs.error, candidates.error]);
+    navigate('/lead-finder/linkedin', { replace: true });
+  }, [activeId, run.error, jobs.error, candidates.error, navigate]);
 
   const runData = run.data;
-  const live = isRunLive(runData);
   const extracting = isRunExtracting(runData);
   const jobItems = jobs.data?.items || [];
   const jobsTotal = jobs.data?.total ?? jobItems.length;
@@ -273,8 +305,6 @@ export default function LinkedInFinder() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [extracting]);
 
-  const extract = useAction(() => extractRun(activeId), 'Emails extracted from posts', { invalidatePrefixes: [RUNS_KEY] });
-  const cancel = useAction(() => cancelRun(activeId), 'Capture cancelled — leads kept', { invalidatePrefixes: [RUNS_KEY] });
   const save = useAction(() => saveGroup(activeId, groupName.trim(), selectedIds), (data) => `Saved ${saveResultSummary(data)}`, {
     invalidatePrefixes: [RUNS_KEY, '/recipient-groups', '/recipients'],
     onSuccess: (data) => {
@@ -283,90 +313,26 @@ export default function LinkedInFinder() {
       setGroupName('');
     },
   });
-  const removeRuns = useAction(
-    (ids) => (ids.length === 1 ? deleteRun(ids[0]) : deleteRuns(ids)),
-    (data) => `Deleted ${data?.deleted || 1} capture${(data?.deleted || 1) === 1 ? '' : 's'}`,
-    {
-      invalidatePrefixes: [RUNS_KEY],
-      onSuccess: (data, ids) => {
-        const removed = new Set(data?.run_ids || ids || []);
-        setSelectedRunIds((current) => current.filter((id) => !removed.has(id)));
-        if (activeId && removed.has(activeId)) {
-          selectionOverrides.current.clear();
-          setActiveId(null);
-          setSaved(null);
-        }
-        setDeleteTarget(null);
-      },
-    }
-  );
 
-  const openRun = (id) => {
-    selectionOverrides.current.clear();
-    setActiveId(id || null);
-    setSaved(null);
-    const next = new URLSearchParams(params);
-    if (id) next.set('run', id);
-    else next.delete('run');
-    setParams(next, { replace: true });
-  };
-
-  // Extension "Open in Studio" deep-link: /lead-finder/linkedin?run=<id>
-  useEffect(() => {
-    const fromUrl = params.get('run');
-    if (fromUrl && fromUrl !== activeId) {
-      selectionOverrides.current.clear();
-      setActiveId(fromUrl);
-      setSaved(null);
-    }
-  }, [params, activeId]);
-
-  const toggleRunSelected = (id, checked) => {
-    setSelectedRunIds((current) => {
-      if (checked) return current.includes(id) ? current : [...current, id];
-      return current.filter((runId) => runId !== id);
-    });
-  };
-
-  const runItems = runs.data?.items || [];
-  const allRunsSelected = runItems.length > 0 && selectedRunIds.length === runItems.length;
-  const deleteIds =
-    deleteTarget === 'selected'
-      ? selectedRunIds
-      : deleteTarget?.id
-        ? [deleteTarget.id]
-        : [];
+  // Legacy deep-link: /lead-finder/linkedin?run=<id> → /lead-finder/linkedin/<id>
+  if (!routeRunId && legacyRun) {
+    return <Navigate to={`/lead-finder/linkedin/${legacyRun}`} replace />;
+  }
+  if (!activeId) {
+    return <Navigate to="/lead-finder/linkedin" replace />;
+  }
 
   return (
     <>
       <PageHeader
-        eyebrow="AUDIENCE WORKSPACE"
-        title="LinkedIn Search"
-        description="Use the Chrome extension: enter keywords, Collect — it opens LinkedIn post search, auto-scrolls, and syncs public emails here. Review leads (email first) and save a recipient group."
+        eyebrow="OUTREACH INTELLIGENCE"
+        title={runTitle(runData) || 'LinkedIn capture'}
+        description="Review leads from this capture, then save a recipient group."
+        backTo="/lead-finder/linkedin"
+        backLabel="Back to captures"
       />
 
-      <div className="lead-layout">
-        <div className="lead-main">
-          {!activeId ? (
-            <section className="panel">
-              {runs.data?.items?.length ? (
-                <Empty
-                  title="Select a capture to review"
-                  description="Open a run from Recent captures to see its jobs and leads. New captures from the extension appear there automatically."
-                />
-              ) : (
-                <Empty
-                  title="Capture your first LinkedIn search"
-                  description="Captures start in the Chrome extension (keyword search → Collect), not here. Once a run exists, open it from Recent captures."
-                  action={(
-                    <ol className="lead-install-steps">
-                      {INSTALL_STEPS.map((step) => <li key={step}>{step}</li>)}
-                    </ol>
-                  )}
-                />
-              )}
-            </section>
-          ) : (
+      <div className="lead-detail">
             <section className="panel">
               <QueryState query={run}>
                 {() => (
@@ -392,22 +358,8 @@ export default function LinkedInFinder() {
                       <div className="lead-selection-tools">
                         <span className="selection-indicator">
                           {showingLabel(jobItems.length, jobsTotal, 'post')}{jobsTruncated ? ' (among shown posts)' : ''}
+                          {extracting ? ' · Extracting emails…' : ''}
                         </span>
-                      </div>
-                      <div className="lead-toolbar-actions">
-                        {canCancelRun(runData) && (
-                          <BusyButton variant="secondary" size="sm" busy={cancel.isPending} onClick={() => cancel.mutate()}>
-                            <Ban size={14} /> Cancel
-                          </BusyButton>
-                        )}
-                        <BusyButton
-                          size="sm"
-                          busy={extract.isPending || extracting}
-                          disabled={runData.status === 'cancelled' || jobItems.length === 0}
-                          onClick={() => extract.mutate()}
-                        >
-                          <Mail size={14} /> Extract emails from posts
-                        </BusyButton>
                       </div>
                     </div>
 
@@ -494,8 +446,10 @@ export default function LinkedInFinder() {
                                 <th>Email</th>
                                 <th>Name</th>
                                 <th>Company</th>
-                                <th>Position</th>
+                                <th>Designation</th>
+                                <th>Posted</th>
                                 <th>Source</th>
+                                <th><span className="sr-only">Post text</span></th>
                               </tr>
                             </thead>
                             <tbody>
@@ -528,87 +482,7 @@ export default function LinkedInFinder() {
                 )}
               </QueryState>
             </section>
-          )}
-        </div>
-
-        <aside className="panel lead-runs" aria-label="Recent captures">
-          <div className="panel-heading">
-            <div><h2><History size={14} /> Recent captures</h2></div>
-          </div>
-          {runItems.length > 0 && (
-            <div className="lead-run-toolbar">
-              <label className="lead-run-select-all">
-                <input
-                  type="checkbox"
-                  checked={allRunsSelected}
-                  onChange={(event) => {
-                    setSelectedRunIds(event.target.checked ? runItems.map((item) => item.id) : []);
-                  }}
-                />
-                Select all
-              </label>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={!selectedRunIds.length || removeRuns.isPending}
-                onClick={() => setDeleteTarget('selected')}
-              >
-                <Trash2 size={13} /> Delete{selectedRunIds.length ? ` (${selectedRunIds.length})` : ''}
-              </Button>
-            </div>
-          )}
-          <QueryState query={runs}>
-            {(data) => data.items.length ? (
-              <ul className="lead-run-list">
-                {data.items.map((item) => (
-                  <li key={item.id} className={item.id === activeId ? 'active' : ''}>
-                    <label className="lead-run-check">
-                      <input
-                        type="checkbox"
-                        aria-label={`Select ${runTitle(item)}`}
-                        checked={selectedRunIds.includes(item.id)}
-                        onChange={(event) => toggleRunSelected(item.id, event.target.checked)}
-                      />
-                    </label>
-                    <button type="button" className="lead-run-open" onClick={() => openRun(item.id)}>
-                      <strong>{runTitle(item)}</strong>
-                      <span><StatusBadge status={item.status} /><small>{item.job_count} posts · {item.candidate_count} leads</small></span>
-                    </button>
-                    <button
-                      type="button"
-                      className="lead-run-delete"
-                      aria-label={`Delete ${runTitle(item)}`}
-                      disabled={removeRuns.isPending}
-                      onClick={() => setDeleteTarget(item)}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <>
-                <p className="lead-runs-empty">No captures yet.</p>
-                {!activeId && <small className="lead-runs-empty">Install the extension and start a capture.</small>}
-              </>
-            )}
-          </QueryState>
-        </aside>
       </div>
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title={deleteIds.length > 1 ? 'Delete selected captures' : 'Delete capture'}
-        message={
-          deleteIds.length > 1
-            ? `This permanently deletes ${deleteIds.length} captures and their posts/leads from the database. Recipient groups already saved are kept.`
-            : `This permanently deletes “${runTitle(deleteTarget !== 'selected' ? deleteTarget : null) || 'this capture'}” and its posts/leads from the database. Recipient groups already saved are kept.`
-        }
-        confirmLabel={deleteIds.length > 1 ? 'Delete selected' : 'Delete permanently'}
-        onConfirm={() => removeRuns.mutateAsync(deleteIds)}
-      />
 
       <Dialog open={saveOpen} onOpenChange={setSaveOpen} busy={save.isPending} title="Save as recipient group" description="Selected leads are added to your recipients and grouped for campaigns.">
         <form

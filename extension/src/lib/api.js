@@ -175,5 +175,5 @@ export function listPendingJobs(runId, limit = 200) {
 }
 
 export function studioRunUrl(studioUrl, runId) {
-  return `${normalizeStudioUrl(studioUrl)}/lead-finder/linkedin?run=${encodeURIComponent(runId)}`;
+  return `${normalizeStudioUrl(studioUrl)}/lead-finder/linkedin/${encodeURIComponent(runId)}`;
 }

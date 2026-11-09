@@ -10,6 +10,7 @@ from app.schemas.inputs import (
     LeadCandidatePatch,
     LeadCandidatesSelectionInput,
     LeadFinderRunInput,
+    LeadFinderRunsDeleteInput,
     LeadFinderSaveGroupInput,
 )
 from app.security.auth import current_user, editor
@@ -214,6 +215,16 @@ def continue_run(run_id: str, user=Depends(editor), db=Depends(get_db)):
 @router.post("/runs/{run_id}/cancel")
 def cancel_run(run_id: str, user=Depends(editor), db=Depends(get_db)):
     return run_payload(db, service.cancel_run(db, user, run_id))
+
+
+@router.delete("/runs/{run_id}", status_code=200)
+def delete_run(run_id: str, user=Depends(editor), db=Depends(get_db)):
+    return service.delete_runs(db, user, [run_id])
+
+
+@router.post("/runs/bulk-delete", status_code=200)
+def bulk_delete_runs(data: LeadFinderRunsDeleteInput, user=Depends(editor), db=Depends(get_db)):
+    return service.delete_runs(db, user, data.run_ids)
 
 
 @router.post("/runs/{run_id}/save-group", status_code=201)

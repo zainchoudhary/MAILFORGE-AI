@@ -3,23 +3,63 @@ import { JOB_ID_FROM_URL } from "./selectors.js";
 
 const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
 
-// Broad enough for feed + content search; nested duplicates are filtered later.
+// Full post wrappers only — NEVER `.update-components-actor` (that's just the name row;
+// emails live in sibling commentary, so actor-only matches produced email-less "posts"
+// and forced the page-sweep into bare "LinkedIn search email" synthetics).
 const POST_CARD =
-  '.feed-shared-update-v2, .occludable-update, article.feed-shared-update-v2, div[data-urn*="activity:"], div[data-urn*="ugcPost:"], div[data-urn*="share:"], [data-chameleon-result-urn], .reusable-search__result-container, .update-components-actor';
+  '.feed-shared-update-v2, .occludable-update, article.feed-shared-update-v2, article[data-urn], div[data-urn*="activity:"], div[data-urn*="ugcPost:"], div[data-urn*="share:"], [data-chameleon-result-urn], [data-id*="urn:li:activity"], [data-id*="urn:li:ugcPost"], .reusable-search__result-container, li.reusable-search__result-container, div.feed-shared-update-v2__control-menu-container, .update-components-mini-update-v2';
+
+const POST_CONTAINER_HINT =
+  /activity:|ugcPost:|share:|feed-shared-update|occludable-update|chameleon-result|reusable-search__result/i;
 
 const POST_TEXT =
   ".feed-shared-update-v2__description, .feed-shared-text, .update-components-text, .break-words, .feed-shared-inline-show-more-text, .feed-shared-update-v2__commentary, .feed-shared-inline-show-more-text__text, span.break-words";
 
 const POST_AUTHOR =
-  ".update-components-actor__name, .feed-shared-actor__name, .update-components-actor__title span[aria-hidden='true'], .feed-shared-actor__title, .entity-result__title-text a span[aria-hidden='true']";
+  ".update-components-actor__name, .feed-shared-actor__name, .update-components-actor__title span[aria-hidden='true'], .update-components-actor__title, .feed-shared-actor__title, .entity-result__title-text a span[aria-hidden='true'], .entity-result__title-text a, .artdeco-entity-lockup__title, .update-components-actor__container a[href*='/in/'] span[aria-hidden='true']";
 
 const POST_SUBTITLE =
-  ".update-components-actor__description, .feed-shared-actor__description, .update-components-actor__meta, .entity-result__primary-subtitle";
+  ".update-components-actor__description, .feed-shared-actor__description, .update-components-actor__meta, .entity-result__primary-subtitle, .artdeco-entity-lockup__subtitle, .update-components-actor__supplementary-actor-info";
+
+const POST_TIME =
+  "time[datetime], .update-components-actor__sub-description time, .feed-shared-actor__sub-description time, a.update-components-actor__sub-description-link time";
 
 const POST_LINK =
   'a[href*="/posts/"], a[href*="/feed/update/"], a[href*="activity-"], a[href*="urn:li:activity"], a[href*="urn:li:ugcPost"]';
 
 const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+
+const AUTHOR_JUNK =
+  /^(live demos|working hours|follow|connect|promoted|view|like|comment|repost|send|us|uk|remote|full[- ]time|part[- ]time|data engineer|recruiter|hiring)$/i;
+
+/** LinkedIn content-search cards often dump "Feed post {Name} • 2nd {Headline} {2h} …" into innerText. */
+export function parseFeedPostHeader(text) {
+  const raw = String(text || "").replace(/\s+/g, " ").trim();
+  if (!raw) return null;
+  const m = raw.match(
+    /Feed post\s+(.+?)\s+•\s+(\d+(?:st|nd|rd|th))\s+(.+?)\s+(\d+\s*(?:mo|yr|y|[smhdw])|just now|yesterday)\b/i
+  );
+  if (!m) return null;
+  const author = cleanAuthor(m[1]);
+  let subtitle = clean(m[3])
+    .replace(/\s+(Follow|Connect|Edited|•).*$/i, "")
+    .trim();
+  if (subtitle.length > 200) subtitle = subtitle.slice(0, 200);
+  const posted_at_text = clean(m[4]);
+  if (!author && !subtitle && !posted_at_text) return null;
+  return { author, subtitle, posted_at_text, degree: m[2] };
+}
+
+export function cleanAuthor(name) {
+  let n = clean(name || "");
+  if (!n) return "";
+  const viewed = n.match(/^View\s+(.+?)(?:['’]s)?\s+profile$/i);
+  if (viewed) n = clean(viewed[1]);
+  if (AUTHOR_JUNK.test(n)) return "";
+  if (n.length < 2 || n.length > 80) return "";
+  if (/@/.test(n) || /^https?:/i.test(n)) return "";
+  return n;
+}
 
 function stableId(parts) {
   const raw = parts.filter(Boolean).join("|").slice(0, 400);
@@ -129,6 +169,32 @@ function firstMatchText(card, selector) {
   return "";
 }
 
+function postTime(card) {
+  const el = card.querySelector(POST_TIME);
+  if (!el) {
+    // Do not use firstMatchText here — it skips 2-char labels like "1d" / "2h".
+    const sel =
+      ".update-components-actor__sub-description, .feed-shared-actor__sub-description, .update-components-actor__meta";
+    for (const node of card.querySelectorAll(sel)) {
+      const text = clean(node.textContent);
+      if (!text) continue;
+      // Put `mo` / `yr` before `m` / `y` so "3mo" is not captured as "3m".
+      if (
+        /^(\d+\s*(?:mo|yr|y)|just now|yesterday|\d+\s*[smhdw])\b/i.test(text) ||
+        /\bedited\b/i.test(text)
+      ) {
+        const token =
+          text.match(/^(\d+\s*(?:mo|yr|y)|just now|yesterday|\d+\s*[smhdw])/i)?.[0] || text;
+        return { posted_at: "", posted_at_text: clean(token) };
+      }
+    }
+    return { posted_at: "", posted_at_text: "" };
+  }
+  const posted_at = (el.getAttribute("datetime") || "").trim();
+  const posted_at_text = clean(el.textContent) || posted_at;
+  return { posted_at, posted_at_text };
+}
+
 const SEE_MORE_SEL =
   "button.see-more:not([data-clicked='true']), button.feed-shared-inline-show-more-text__button:not([data-clicked='true']), button[aria-label*='see more' i]:not([data-clicked='true']), button[aria-label*='Show more' i]:not([data-clicked='true']), .feed-shared-inline-show-more-text button:not([data-clicked='true'])";
 
@@ -165,18 +231,181 @@ function postBody(card) {
   chunks.sort((a, b) => b.length - a.length);
   const best = chunks[0] || "";
   const joined = chunks.slice(0, 6).join("\n");
-  const full = clean(card.innerText || "").slice(0, 8000);
+  const full = clean(card.innerText || "").slice(0, 20000);
   // Prefer structured post text, but keep full card text so emails outside description nodes are kept.
   const primary = joined.length > best.length ? joined : best;
   if (!primary) return full;
   if (full && full.length > primary.length && EMAIL_RE.test(full) && !EMAIL_RE.test(primary)) {
-    return `${primary}\n${full}`;
+    return `${primary}\n${full}`.slice(0, 20000);
   }
-  return primary || full;
+  return (primary || full).slice(0, 20000);
 }
 
 function isNestedCard(card, allCards) {
   return allCards.some((other) => other !== card && card.contains(other));
+}
+
+/** Turn one LinkedIn post card into the upload shape (author, designation, time, full body). */
+export function cardToPost(card, base = "https://www.linkedin.com", { pageHref = "" } = {}) {
+  if (!card) return null;
+  expandSeeMore(card);
+  const body = postBody(card);
+  if (!body || body.length < 12) return null;
+  let author = cleanAuthor(firstMatchText(card, POST_AUTHOR));
+  let subtitle = firstMatchText(card, POST_SUBTITLE);
+  if (!author) {
+    const profile = card.querySelector(
+      'a[href*="/in/"] span[aria-hidden="true"], a[href*="/in/"] span[dir="ltr"]'
+    );
+    author = cleanAuthor(profile?.textContent || "");
+  }
+  if (!author) {
+    const named = card.querySelector('a[href*="/in/"]');
+    author = cleanAuthor(named?.getAttribute("aria-label") || named?.textContent || "");
+  }
+  if (!subtitle) {
+    const lockup = clean(
+      card.querySelector(".artdeco-entity-lockup__subtitle, .entity-result__primary-subtitle")
+        ?.textContent || ""
+    );
+    if (lockup && lockup.length < 200) subtitle = lockup;
+  }
+  const urn = cardUrn(card);
+  const url = postUrl(card, base);
+  let { posted_at, posted_at_text } = postTime(card);
+
+  // Content-search: DOM actor nodes often miss; header line inside body is authoritative.
+  const header = parseFeedPostHeader(body);
+  if (header) {
+    if (header.author && (!author || AUTHOR_JUNK.test(author))) author = header.author;
+    if (header.subtitle && (!subtitle || subtitle.length < 8)) subtitle = header.subtitle;
+    if (header.posted_at_text && !posted_at_text) posted_at_text = header.posted_at_text;
+  }
+
+  let id = urnId(card);
+  if (!id) {
+    const fromUrl = /(?:activity|ugcPost|share):(\d{6,})/i.exec(url || "") || JOB_ID_FROM_URL.exec(url || "");
+    id = fromUrl ? `p${fromUrl[1]}` : stableId([url || "", author, body.slice(0, 160)]);
+  }
+  id = String(id).slice(0, 64);
+  const href =
+    pageHref ||
+    (card.ownerDocument?.defaultView?.location?.href ||
+      (typeof location !== "undefined" ? location.href : "") ||
+      base);
+  const onSearch = /\/search\/results\/content/i.test(href);
+  return {
+    linkedin_job_id: id,
+    title: author || "LinkedIn post",
+    company: subtitle || "",
+    location: "",
+    job_url: url || "",
+    list_payload: {
+      kind: "post",
+      author,
+      subtitle,
+      posted_at,
+      posted_at_text,
+      preview: body.slice(0, 280),
+      source: onSearch ? "content_search" : "feed_post",
+      urn: urn || "",
+    },
+    detail_payload: {
+      description: body,
+      kind: "post",
+      author,
+      subtitle,
+      posted_at,
+      posted_at_text,
+      post_url: url || "",
+    },
+    detail_status: "fetched",
+  };
+}
+
+function isPostContainer(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (el.matches?.(POST_CARD)) return true;
+  const urn =
+    el.getAttribute?.("data-urn") ||
+    el.getAttribute?.("data-chameleon-result-urn") ||
+    el.getAttribute?.("data-id") ||
+    "";
+  if (/(?:activity|ugcPost|share):/i.test(urn)) return true;
+  const cls = `${el.className || ""}`;
+  return POST_CONTAINER_HINT.test(cls);
+}
+
+/** Climb from a node to the nearest full post container. */
+export function closestPostContainer(node) {
+  let cur = node?.nodeType === 3 ? node.parentElement : node;
+  let fallback = null;
+  for (let i = 0; cur && i < 25; i++) {
+    if (isPostContainer(cur)) return cur;
+    // Prefer blocks that already contain both a profile link and substantial text.
+    const textLen = (cur.innerText || "").length;
+    if (
+      !fallback &&
+      textLen > 80 &&
+      textLen < 20000 &&
+      cur.querySelector?.('a[href*="/in/"], a[href*="/company/"]')
+    ) {
+      fallback = cur;
+    }
+    cur = cur.parentElement;
+  }
+  return fallback;
+}
+
+/**
+ * Find the post card that owns this email.
+ * 1) Known post wrappers whose text includes the email
+ * 2) TreeWalker: email text node → climb to post container (handles LinkedIn DOM drift)
+ */
+export function findCardForEmail(root, email) {
+  const needle = String(email || "").toLowerCase().trim();
+  if (!needle || !root?.querySelectorAll) return null;
+
+  const cards = [...root.querySelectorAll(POST_CARD)];
+  let best = null;
+  for (const card of cards) {
+    const text = `${card.innerText || ""}`.toLowerCase();
+    if (!text.includes(needle)) continue;
+    if (isNestedCard(card, cards)) continue;
+    if (!best || (card.innerText || "").length < (best.innerText || "").length) best = card;
+  }
+  if (best) return best;
+
+  const doc = root.ownerDocument || root;
+  const scope = root.body || root;
+  if (!doc.createTreeWalker || !scope) return null;
+  const walker = doc.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  let node;
+  let walkBest = null;
+  while ((node = walker.nextNode())) {
+    if (!(node.nodeValue || "").toLowerCase().includes(needle)) continue;
+    const container = closestPostContainer(node);
+    if (!container) continue;
+    if (
+      !walkBest ||
+      (container.innerText || "").length < (walkBest.innerText || "").length
+    ) {
+      walkBest = container;
+    }
+  }
+  return walkBest;
+}
+
+/** Visible page text around an email — last-resort body when no card is found. */
+export function textWindowAroundEmail(root, email, radius = 900) {
+  const needle = String(email || "").toLowerCase().trim();
+  const text = clean((root.body || root).innerText || "");
+  if (!needle || !text) return "";
+  const idx = text.toLowerCase().indexOf(needle);
+  if (idx < 0) return "";
+  const start = Math.max(0, idx - radius);
+  const end = Math.min(text.length, idx + needle.length + radius);
+  return text.slice(start, end).trim();
 }
 
 export function parseVisiblePosts(root, base = "https://www.linkedin.com") {
@@ -184,47 +413,17 @@ export function parseVisiblePosts(root, base = "https://www.linkedin.com") {
   const seen = new Set();
   const posts = [];
   const cards = [...root.querySelectorAll(POST_CARD)];
+  const pageHref =
+    (root.ownerDocument || root)?.defaultView?.location?.href ||
+    (typeof location !== "undefined" ? location.href : "") ||
+    base;
   for (const card of cards) {
     // Prefer innermost cards so a search wrapper does not swallow many posts.
     if (isNestedCard(card, cards)) continue;
-    const body = postBody(card);
-    if (!body || body.length < 12) continue;
-    const author = firstMatchText(card, POST_AUTHOR);
-    const subtitle = firstMatchText(card, POST_SUBTITLE);
-    const urn = cardUrn(card);
-    // Permalink when available; empty is OK — emails still upload + extract.
-    const url = postUrl(card, base);
-
-    let id = urnId(card);
-    if (!id) {
-      const fromUrl = /(?:activity|ugcPost|share):(\d{6,})/i.exec(url || "") || JOB_ID_FROM_URL.exec(url || "");
-      id = fromUrl ? `p${fromUrl[1]}` : stableId([url || "", author, body.slice(0, 160)]);
-    }
-    id = String(id).slice(0, 64);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const pageHref =
-      (root.ownerDocument || root)?.defaultView?.location?.href ||
-      (typeof location !== "undefined" ? location.href : "") ||
-      base;
-    const onSearch = /\/search\/results\/content/i.test(pageHref);
-    posts.push({
-      linkedin_job_id: id,
-      title: author || "LinkedIn post",
-      company: subtitle || "",
-      location: "",
-      job_url: url || "",
-      list_payload: {
-        kind: "post",
-        author,
-        subtitle,
-        preview: body.slice(0, 280),
-        source: onSearch ? "content_search" : "feed_post",
-        urn: urn || "",
-      },
-      detail_payload: { description: body, kind: "post", author, subtitle, post_url: url || "" },
-      detail_status: "fetched",
-    });
+    const post = cardToPost(card, base, { pageHref });
+    if (!post || seen.has(post.linkedin_job_id)) continue;
+    seen.add(post.linkedin_job_id);
+    posts.push(post);
   }
   return posts;
 }

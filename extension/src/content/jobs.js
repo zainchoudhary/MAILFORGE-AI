@@ -135,32 +135,73 @@
         : parse.parseVisibleJobs(document, location.origin);
     }
 
-    // ReachIn-style page sweep: any visible @ not already in a post card still gets uploaded.
+    // ReachIn-style page sweep: visible @ not already in a parsed post still get uploaded —
+    // but attach the hosting card (author / designation / full body) whenever possible.
     if (!onJobs && searchCollect?.extractEmailsFromDocument) {
       const pageEmails = searchCollect.extractEmailsFromDocument(document);
       const known = emailsAlreadyInItems(items);
       const missing = pageEmails.filter((e) => !known.has(e));
       if (missing.length) {
         const keywords = searchCollect.getUrlSearchKeywords?.(location.href) || "";
-        const cardSel =
-          ".feed-shared-update-v2, .occludable-update, div[data-urn*='activity:'], div[data-urn*='ugcPost:'], [data-chameleon-result-urn]";
-        const urlForEmail = (email) => {
-          const needle = String(email || "").toLowerCase();
-          if (!needle || !posts.postUrl) return "";
-          for (const card of document.querySelectorAll(cardSel)) {
-            if (!(card.innerText || "").toLowerCase().includes(needle)) continue;
-            const url = posts.postUrl(card, location.origin);
-            if (url && !posts.isSearchOrListUrl?.(url)) return url;
+        const seenIds = new Set(items.map((it) => it.linkedin_job_id));
+        const stillMissing = [];
+        for (const email of missing) {
+          const card = posts.findCardForEmail?.(document, email);
+          const fromCard = card ? posts.cardToPost?.(card, location.origin) : null;
+          if (fromCard) {
+            const desc = fromCard.detail_payload?.description || "";
+            if (!desc.toLowerCase().includes(email.toLowerCase())) {
+              fromCard.detail_payload.description = `${desc}\n${email}`.slice(0, 20000);
+              fromCard.list_payload.preview = fromCard.detail_payload.description.slice(0, 280);
+            }
+            if (!seenIds.has(fromCard.linkedin_job_id)) {
+              seenIds.add(fromCard.linkedin_job_id);
+              items.push(fromCard);
+            }
+            known.add(email.toLowerCase());
+            continue;
           }
-          return "";
-        };
-        items = items.concat(
-          searchCollect.emailsAsSyntheticPosts(missing, {
-            base: "",
-            keywords,
-            urlForEmail,
-          })
-        );
+          stillMissing.push(email);
+        }
+        if (stillMissing.length) {
+          items = items.concat(
+            searchCollect.emailsAsSyntheticPosts(stillMissing, {
+              base: "",
+              keywords,
+              urlForEmail: (email) => {
+                const card = posts.findCardForEmail?.(document, email);
+                if (!card || !posts.postUrl) return "";
+                const url = posts.postUrl(card, location.origin);
+                return url && !posts.isSearchOrListUrl?.(url) ? url : "";
+              },
+              metaForEmail: (email) => {
+                // Last resort: still attach surrounding page text so View post isn't email-only.
+                const windowText = posts.textWindowAroundEmail?.(document, email, 1000) || "";
+                const lines = windowText
+                  .split(/\n+/)
+                  .map((l) => l.trim())
+                  .filter(Boolean);
+                const emailLine = lines.findIndex((l) => l.toLowerCase().includes(email.toLowerCase()));
+                const before = emailLine > 0 ? lines.slice(Math.max(0, emailLine - 6), emailLine) : [];
+                const authorGuess = before.find((l) => l.length > 2 && l.length < 80 && !/@/.test(l) && !/^http/i.test(l)) || "";
+                const subtitleGuess =
+                  [...before].reverse().find(
+                    (l) =>
+                      l !== authorGuess &&
+                      l.length > 2 &&
+                      l.length < 120 &&
+                      !/@/.test(l) &&
+                      /(at |@|manager|engineer|recruiter|founder|ceo|hr|talent)/i.test(l)
+                  ) || "";
+                return {
+                  author: authorGuess,
+                  subtitle: subtitleGuess,
+                  description: windowText || email,
+                };
+              },
+            })
+          );
+        }
       }
     }
 

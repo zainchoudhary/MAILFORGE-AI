@@ -3,7 +3,7 @@
 import logging
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -35,6 +35,45 @@ def candidate_count(db: Session, run_id: str) -> int:
     return db.scalar(
         select(func.count()).select_from(LeadCandidate).where(LeadCandidate.run_id == run_id)
     ) or 0
+
+
+def delete_runs(db: Session, user, run_ids: list[str]) -> dict:
+    """Hard-delete search runs and their candidates from the DB."""
+    ids = list(dict.fromkeys([str(rid).strip() for rid in (run_ids or []) if str(rid).strip()]))
+    if not ids:
+        raise HTTPException(422, "Select at least one search to delete")
+    if len(ids) > 100:
+        raise HTTPException(422, "You can delete at most 100 searches at once")
+
+    runs = list(
+        db.scalars(
+            select(LeadSearchRun).where(
+                LeadSearchRun.organization_id == user.organization_id,
+                LeadSearchRun.id.in_(ids),
+            )
+        )
+    )
+    found = {run.id for run in runs}
+    missing = [rid for rid in ids if rid not in found]
+    if missing:
+        raise HTTPException(404, f"Search not found: {missing[0]}")
+
+    db.execute(
+        delete(LeadCandidate).where(
+            LeadCandidate.organization_id == user.organization_id,
+            LeadCandidate.run_id.in_(ids),
+        )
+    )
+    db.execute(
+        delete(LeadSearchRun).where(
+            LeadSearchRun.organization_id == user.organization_id,
+            LeadSearchRun.id.in_(ids),
+        )
+    )
+    for run_id in ids:
+        audit(db, user, "lead_finder.run_deleted", run_id)
+    db.commit()
+    return {"deleted": len(ids), "run_ids": ids}
 
 
 def create_run(db: Session, user, instruction: str, target_count: int | None) -> LeadSearchRun:

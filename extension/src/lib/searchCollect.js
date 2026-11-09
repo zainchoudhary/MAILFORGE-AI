@@ -103,16 +103,18 @@ function stableId(parts) {
 }
 
 /**
- * Turn page-level emails that aren't already inside post payloads into uploadable
- * "jobs" so the backend extract path can create candidates.
- * Prefer a real post permalink (`postUrl`) over the search-results page URL.
+ * Last-resort upload when an email is visible but no post card can be attached.
+ * Prefer `posts.cardToPost` / `findCardForEmail` so author + body are not lost.
+ * `metaForEmail(email)` may supply { author, subtitle, description, posted_at, posted_at_text, job_url }.
  */
 export function emailsAsSyntheticPosts(
   emails,
-  { base = "", keywords = "", urlForEmail = null } = {}
+  { base = "", keywords = "", urlForEmail = null, metaForEmail = null } = {}
 ) {
   return (emails || []).map((email) => {
+    const meta = (typeof metaForEmail === "function" ? metaForEmail(email) : null) || {};
     let resolved =
+      meta.job_url ||
       (typeof urlForEmail === "function" ? urlForEmail(email) : "") ||
       (base && !/\/search\/results\//i.test(base) ? base : "") ||
       "";
@@ -120,21 +122,40 @@ export function emailsAsSyntheticPosts(
     if (/\/search\/results\//i.test(resolved)) resolved = "";
     const activity = /(?:activity|ugcPost|share):(\d{6,})/i.exec(resolved);
     const id = (activity ? `p${activity[1]}` : stableId(["email", email])).slice(0, 64);
+    const author = String(meta.author || "").trim();
+    const subtitle = String(meta.subtitle || "").trim();
+    const posted_at = String(meta.posted_at || "").trim();
+    const posted_at_text = String(meta.posted_at_text || "").trim();
+    let description = String(meta.description || "").trim();
+    if (!description || description.toLowerCase() === String(email).toLowerCase()) {
+      description = email;
+    } else if (!description.toLowerCase().includes(String(email).toLowerCase())) {
+      description = `${description}\n${email}`;
+    }
     return {
       linkedin_job_id: id,
-      title: "LinkedIn search email",
-      company: "",
+      title: author || "LinkedIn search email",
+      company: subtitle || "",
       location: "",
       job_url: resolved,
       list_payload: {
         kind: "post",
+        author,
+        subtitle,
+        posted_at,
+        posted_at_text,
         email,
         keywords,
+        preview: description.slice(0, 280),
         source: "content_search",
       },
       detail_payload: {
-        description: email,
+        description,
         kind: "post",
+        author,
+        subtitle,
+        posted_at,
+        posted_at_text,
         email,
         keywords,
         post_url: resolved,

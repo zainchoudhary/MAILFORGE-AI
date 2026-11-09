@@ -65,4 +65,19 @@ assert.equal(noUrl.length, 1);
 assert.equal(noUrl[0].job_url, "", "search URLs must be stripped, email still kept");
 assert.equal(noUrl[0].detail_payload.description, "x@y.com");
 
+const rich = emailsAsSyntheticPosts(["hire@acme.com"], {
+  keywords: "hiring",
+  metaForEmail: () => ({
+    author: "Alex Rivera",
+    subtitle: "Hiring Manager at Acme",
+    description: "Reach hire@acme.com for roles. Full JD inside.",
+    posted_at_text: "2d",
+    job_url: "https://www.linkedin.com/feed/update/urn:li:activity:999/",
+  }),
+});
+assert.equal(rich[0].title, "Alex Rivera");
+assert.equal(rich[0].list_payload.subtitle, "Hiring Manager at Acme");
+assert.match(rich[0].detail_payload.description, /Full JD inside/);
+assert.equal(rich[0].detail_payload.author, "Alex Rivera");
+
 console.log("test_search_collect: ok");

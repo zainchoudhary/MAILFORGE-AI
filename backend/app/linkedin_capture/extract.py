@@ -19,6 +19,53 @@ _ACTIVITY_ID_RE = re.compile(r"(?:activity|ugcPost|share)[:\-](\d{6,})", re.I)
 _POST_PERMALINK_RE = re.compile(
     r"/feed/update/urn:li:(?:activity|ugcPost|share):\d+|/posts/[^/?#]+", re.I
 )
+_FEED_POST_HEADER_RE = re.compile(
+    r"Feed post\s+(.+?)\s+•\s+(\d+(?:st|nd|rd|th))\s+(.+?)\s+"
+    r"(\d+\s*(?:mo|yr|y|[smhdw])|just now|yesterday)\b",
+    re.I,
+)
+_AUTHOR_JUNK_RE = re.compile(
+    r"^(live demos|working hours|follow|connect|promoted|view|like|comment|repost|send|"
+    r"us|uk|remote|full[-\s]?time|part[-\s]?time|data engineer|recruiter|hiring)$",
+    re.I,
+)
+_VIEW_PROFILE_RE = re.compile(r"^View\s+(.+?)(?:['’]s)?\s+profile$", re.I)
+
+
+def _clean_author(name: str) -> str:
+    n = re.sub(r"\s+", " ", (name or "")).strip()
+    if not n:
+        return ""
+    viewed = _VIEW_PROFILE_RE.match(n)
+    if viewed:
+        n = re.sub(r"\s+", " ", viewed.group(1)).strip()
+    if _AUTHOR_JUNK_RE.match(n):
+        return ""
+    if len(n) < 2 or len(n) > 80 or "@" in n or n.lower().startswith("http"):
+        return ""
+    return n
+
+
+def _is_junk_author(name: str) -> bool:
+    return not _clean_author(name)
+
+
+def _parse_feed_post_header(text: str) -> dict[str, str] | None:
+    raw = re.sub(r"\s+", " ", (text or "")).strip()
+    if not raw:
+        return None
+    m = _FEED_POST_HEADER_RE.search(raw)
+    if not m:
+        return None
+    author = _clean_author(m.group(1))
+    subtitle = re.sub(r"\s+", " ", m.group(3)).strip()
+    subtitle = re.sub(r"\s+(Follow|Connect|Edited|•).*$", "", subtitle, flags=re.I).strip()
+    if len(subtitle) > 200:
+        subtitle = subtitle[:200]
+    posted_at_text = re.sub(r"\s+", " ", m.group(4)).strip()
+    if not (author or subtitle or posted_at_text):
+        return None
+    return {"author": author, "subtitle": subtitle, "posted_at_text": posted_at_text}
 
 
 def is_post_permalink(url: str) -> bool:
@@ -118,6 +165,24 @@ def extract_from_job(
     )
     # Prefer author/title for name when this is a feed post.
     author = (detail.get("author") or list_p.get("author") or "").strip()
+    subtitle = (detail.get("subtitle") or list_p.get("subtitle") or "").strip()
+    posted_at = (detail.get("posted_at") or list_p.get("posted_at") or "").strip()
+    posted_at_text = (detail.get("posted_at_text") or list_p.get("posted_at_text") or "").strip()
+    # Prefer structured post description only — avoid concatenating title/company noise into View post.
+    post_body = (detail.get("description") or list_p.get("description") or "").strip()
+    if len(post_body) > 20000:
+        post_body = post_body[:20000]
+    # Content-search cards often leave author empty but embed:
+    # "Feed post Muhammad Zubair • 2nd {Headline} 2h …"
+    if kind in ("post", "search_email"):
+        header = _parse_feed_post_header(post_body)
+        if header:
+            if header.get("author") and (not author or _is_junk_author(author)):
+                author = header["author"]
+            if header.get("subtitle") and (not subtitle or len(subtitle) < 8):
+                subtitle = header["subtitle"]
+            if header.get("posted_at_text") and not posted_at_text:
+                posted_at_text = header["posted_at_text"]
     # snippet="" so each draft keeps the text around its own email, not the header.
     drafts = extract_candidates_from_text(
         text, source_url=source_url or "", source_title=title or "", snippet=""
@@ -150,6 +215,34 @@ def extract_from_job(
             text, {d.email for d in out}, title, company, source_url, source_signal=source_signal
         )
     )
+    if kind in ("post", "search_email"):
+        enriched: list[CandidateDraft] = []
+        for d in out:
+            signals = dict(d.signals or {})
+            if posted_at:
+                signals["posted_at"] = posted_at[:64]
+            if posted_at_text:
+                signals["posted_at_text"] = posted_at_text[:80]
+            if post_body:
+                signals["post_body"] = post_body
+            enriched.append(
+                CandidateDraft(
+                    email=d.email,
+                    # Spec: poster name first; near-email name only as fallback.
+                    name=(author or d.name or "")[:200],
+                    company=d.company or company or "",
+                    # Subtitle is the poster's designation. The text extractor often
+                    # keeps only a short role fragment ("Hiring Manager").
+                    position=(subtitle or d.position or "")[:200],
+                    source_url=d.source_url,
+                    source_title=d.source_title or title or author,
+                    snippet=d.snippet,
+                    score=d.score,
+                    signals=signals,
+                    selected=d.selected if (author or d.name or d.company or company) else False,
+                )
+            )
+        out = enriched
     return out
 
 

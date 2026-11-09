@@ -11,6 +11,7 @@ const TITLES = {
   '/overview': 'Overview',
   '/studio': 'AI Agent Studio',
   '/lead-finder/gmail': 'Google Search',
+  '/lead-finder/gmail/new': 'New Google Search',
   '/lead-finder/linkedin': 'LinkedIn Search',
   '/compose': 'Compose',
   '/documents': 'Attachments',
@@ -32,6 +33,8 @@ function pageLabel(pathname) {
   if (TITLES[pathname]) return TITLES[pathname];
   if (pathname.startsWith('/campaigns/')) return 'Campaign';
   if (pathname.startsWith('/activity/')) return 'Email';
+  if (pathname.startsWith('/lead-finder/gmail/')) return 'Google Search';
+  if (pathname.startsWith('/lead-finder/linkedin/')) return 'LinkedIn Search';
   if (pathname.startsWith('/lead-finder')) return 'Outreach Intelligence';
   return null;
 }

@@ -413,3 +413,29 @@ def test_patch_marks_user_edited_fields(client, account, db):
         f"{BASE}/runs/{run.id}/candidates/{cand.id}", headers=account, json={"selected": True}
     )
     assert res.json()["signals"]["user_edited"] == ["name", "position"]
+
+
+def test_delete_run_removes_candidates(client, account, db):
+    run = _run(db)
+    run_id = run.id
+    _cand(db, run, "wipe@acme.test", name="Wipe")
+    deleted = client.delete(f"{BASE}/runs/{run_id}", headers=account)
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["deleted"] == 1
+    assert client.get(f"{BASE}/runs/{run_id}", headers=account).status_code == 404
+    listed = client.get(f"{BASE}/runs", headers=account).json()["items"]
+    assert all(item["id"] != run_id for item in listed)
+    db.expire_all()
+    assert db.scalar(select(LeadCandidate).where(LeadCandidate.run_id == run_id)) is None
+
+
+def test_bulk_delete_runs(client, account, db):
+    a = _run(db)
+    b = _run(db)
+    _cand(db, a, "a@acme.test")
+    _cand(db, b, "b@acme.test")
+    res = client.post(f"{BASE}/runs/bulk-delete", headers=account, json={"run_ids": [a.id, b.id]})
+    assert res.status_code == 200, res.text
+    assert res.json()["deleted"] == 2
+    ids = {item["id"] for item in client.get(f"{BASE}/runs", headers=account).json()["items"]}
+    assert a.id not in ids and b.id not in ids

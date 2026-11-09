@@ -63,3 +63,6 @@ export const setCandidatesSelected = async (runId, candidates, selected) => {
 
 export const saveGroup = async (runId, group_name) =>
   (await api.post(`/lead-finder/runs/${runId}/save-group`, { group_name })).data;
+export const deleteRun = async (id) => (await api.delete(`/lead-finder/runs/${id}`)).data;
+export const deleteRuns = async (runIds) =>
+  (await api.post('/lead-finder/runs/bulk-delete', { run_ids: runIds })).data;

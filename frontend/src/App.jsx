@@ -46,9 +46,12 @@ const EmailDetail = lazy(() =>
 const Templates = lazy(() => import('./pages/Templates'));
 const Studio = lazy(() => import('./pages/Studio'));
 const LeadFinder = lazy(() => import('./pages/LeadFinder'));
+const GoogleSearchList = lazy(() => import('./pages/GoogleSearchList'));
+const GoogleSearchNew = lazy(() => import('./pages/GoogleSearchNew'));
 const LinkedInFinder = lazy(() =>
   import('./pages/LinkedInFinder').then((module) => ({ default: module.default })),
 );
+const LinkedInSearchList = lazy(() => import('./pages/LinkedInSearchList'));
 const Analytics = lazy(() => import('./pages/Analytics'));
 import { SMTP, Settings, Integrations, Audit, Automation } from './pages/Configuration';
 function Guard() {
@@ -80,8 +83,11 @@ export default function App() {
           <Route path="overview" element={<Overview />} />
           <Route path="studio" element={<Studio />} />
           <Route path="lead-finder" element={<Navigate to="/lead-finder/gmail" replace />} />
-          <Route path="lead-finder/gmail" element={<LeadFinder />} />
-          <Route path="lead-finder/linkedin" element={<LinkedInFinder />} />
+          <Route path="lead-finder/gmail" element={<GoogleSearchList />} />
+          <Route path="lead-finder/gmail/new" element={<GoogleSearchNew />} />
+          <Route path="lead-finder/gmail/:runId" element={<LeadFinder />} />
+          <Route path="lead-finder/linkedin" element={<LinkedInSearchList />} />
+          <Route path="lead-finder/linkedin/:runId" element={<LinkedInFinder />} />
           <Route path="compose" element={<Compose />} />
           <Route path="documents" element={<Documents />} />
           <Route path="campaigns" element={<Campaigns />} />

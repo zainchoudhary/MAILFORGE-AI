@@ -507,13 +507,28 @@ def _upsert_candidate(db: Session, run: LinkedInCaptureRun, job: LinkedInJobRaw,
         db.flush()
         return "inserted"
     user_edited = list((existing.signals or {}).get("user_edited") or [])
-    if draft.score > existing.score:
+    richer_body = len(str((signals or {}).get("post_body") or "")) > len(
+        str((existing.signals or {}).get("post_body") or "")
+    )
+    richer_identity = (
+        (not (existing.name or "").strip() and bool(str(values.get("name") or "").strip()))
+        or (not (existing.position or "").strip() and bool(str(values.get("position") or "").strip()))
+    )
+    if draft.score > existing.score or richer_body or richer_identity:
         for field, value in values.items():
-            if field not in user_edited:
+            if field in user_edited:
+                continue
+            if draft.score > existing.score:
                 setattr(existing, field, value)
-        existing.score = draft.score
+            elif value not in (None, "") and not (getattr(existing, field) or ""):
+                setattr(existing, field, value)
+        if draft.score > existing.score:
+            existing.score = draft.score
         existing.job_raw_id = job.id
-        existing.signals = {**signals, "user_edited": user_edited} if user_edited else signals
+        merged_signals = {**(existing.signals or {}), **signals}
+        if user_edited:
+            merged_signals["user_edited"] = user_edited
+        existing.signals = merged_signals
     db.flush()
     return "updated"
 

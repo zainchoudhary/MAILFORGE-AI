@@ -6,7 +6,13 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { parseHTML } from "linkedom";
 import { parseVisibleJobs, extractJobId, canonicalJobUrl } from "../src/lib/parse.js";
-import { parseVisiblePosts } from "../src/lib/posts.js";
+import {
+  parseVisiblePosts,
+  cardToPost,
+  findCardForEmail,
+  parseFeedPostHeader,
+  cleanAuthor,
+} from "../src/lib/posts.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(here, "../fixtures/jobs-list.html"), "utf8");
@@ -63,5 +69,47 @@ assert.equal(
   feedPosts[1].job_url,
   "https://www.linkedin.com/feed/update/urn:li:activity:7987654321098765432/"
 );
+
+assert.equal(feedPosts[0].list_payload.subtitle, "Hiring Manager at Northwind");
+assert.equal(feedPosts[0].list_payload.posted_at, "2026-11-08T14:30:00.000Z");
+assert.equal(feedPosts[0].list_payload.posted_at_text, "1d");
+assert.match(feedPosts[0].detail_payload.description, /Full JD: Python/);
+assert.equal(feedPosts[0].detail_payload.posted_at, "2026-11-08T14:30:00.000Z");
+assert.equal(feedPosts[0].company, "Hiring Manager at Northwind");
+
+const card = feedDoc.querySelector('[data-urn="urn:li:activity:7123456789012345678"]');
+const found = findCardForEmail(feedDoc, "alex.rivera@northwind.test");
+assert.equal(found, card);
+const fromCard = cardToPost(card, "https://www.linkedin.com");
+assert.equal(fromCard.list_payload.author, "Alex Rivera");
+assert.equal(fromCard.list_payload.subtitle, "Hiring Manager at Northwind");
+assert.match(fromCard.detail_payload.description, /alex\.rivera@northwind\.test/);
+
+// Content-search style wrappers (no classic feed-shared-update-v2 on outer node).
+const looseHtml = readFileSync(join(here, "../fixtures/content-search-loose.html"), "utf8");
+const { document: looseDoc } = parseHTML(looseHtml);
+const loosePosts = parseVisiblePosts(looseDoc, "https://www.linkedin.com");
+assert.ok(loosePosts.length >= 2, "loose content-search cards must parse");
+const ayesha = loosePosts.find((p) => /ayeshaasim@businessupscalers\.com/i.test(p.detail_payload.description));
+assert.ok(ayesha, "email post from chameleon wrapper");
+assert.equal(ayesha.list_payload.author, "Ayesha Asim");
+assert.match(ayesha.list_payload.subtitle, /Business Upscalers/i);
+assert.equal(ayesha.list_payload.posted_at_text, "2d");
+
+const viaWalk = findCardForEmail(looseDoc, "careers@hytgenx.ai");
+assert.ok(viaWalk, "TreeWalker must find card for careers@hytgenx.ai");
+const hyt = cardToPost(viaWalk, "https://www.linkedin.com");
+assert.equal(hyt.list_payload.author, "Sam Recruiter");
+assert.match(hyt.detail_payload.description, /careers@hytgenx\.ai/);
+
+const header = parseFeedPostHeader(
+  "Feed post Muhammad Zubair • 2nd Customer Experience & Operations Leader | Support 2h Follow Hiring"
+);
+assert.equal(header.author, "Muhammad Zubair");
+assert.match(header.subtitle, /Customer Experience/);
+assert.equal(header.posted_at_text, "2h");
+assert.equal(cleanAuthor("View Fatima Khawaja’s profile"), "Fatima Khawaja");
+assert.equal(cleanAuthor("Live Demos"), "");
+assert.equal(cleanAuthor("Working Hours"), "");
 
 console.log("parser tests passed (jobs + link fallback + feed posts)");
