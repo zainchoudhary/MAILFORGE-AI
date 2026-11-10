@@ -20,5 +20,7 @@ Emails are taken only from captured LinkedIn text (never invented).
 ## Notes
 
 - Posts: full text is captured immediately.
+- Post links: for posts containing emails, capture tries the same card's three-dot **Copy link to post** action. It preserves LinkedIn short links (`lnkd.in/p/...`) and never constructs a URL from a `share` or `ugcPost` ID alone. If the menu is unavailable, it keeps a usable DOM link or activity permalink; otherwise the link stays unavailable.
+- The copy fallback supports the English **Copy link to post** menu. It captures the copy action without reading existing clipboard contents. After upgrading to 0.5.1, reload the extension, refresh LinkedIn, and collect again to replace old incorrect links.
 - Jobs: scrolls the list and opens a few cards per batch for description text.
 - Caps: max 500 emails / items per run. Selectors: `src/lib/posts.js`, `src/lib/selectors.js`.

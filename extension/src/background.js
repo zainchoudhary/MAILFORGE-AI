@@ -10,6 +10,7 @@ import {
   listPendingJobs,
 } from "./lib/api.js";
 import { buildDetailJob } from "./lib/detail.js";
+import { copyPostLinkInPage } from "./lib/postLink.js";
 import { sleep } from "./lib/capture.js";
 import { clampMaxJobs, clampDeepDelay, clampDetailDelay, MAX_CONSECUTIVE_DETAIL_FAILURES } from "./lib/limits.js";
 import {
@@ -676,6 +677,20 @@ const handlers = {
 export { handlers };
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === 'COPY_POST_LINK') {
+    if (!_sender.tab?.id || !/^https:\/\/www\.linkedin\.com\//.test(_sender.url || '')) {
+      sendResponse({ ok: false, url: '' });
+      return false;
+    }
+    chrome.scripting.executeScript({
+      target: { tabId: _sender.tab.id, frameIds: [_sender.frameId || 0] },
+      world: 'MAIN',
+      func: copyPostLinkInPage,
+      args: [msg.token, msg.email],
+    }).then((results) => sendResponse({ ok: true, url: results[0]?.result || '' }))
+      .catch(() => sendResponse({ ok: false, url: '' }));
+    return true;
+  }
   const handler = msg && handlers[msg.type];
   if (!handler) return false;
   Promise.resolve()

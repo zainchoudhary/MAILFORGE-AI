@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlsplit
 
 from app.lead_finder.extract import (
     _EMAIL_RE,
@@ -254,7 +255,16 @@ def _parse_feed_post_header(text: str) -> dict[str, str] | None:
 def is_post_permalink(url: str) -> bool:
     if not url or _SEARCH_URL_RE.search(url):
         return False
-    return bool(_POST_PERMALINK_RE.search(url))
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme not in ("https", "http"):
+            return False
+        host = parsed.hostname or ""
+        if host == "lnkd.in":
+            return bool(re.fullmatch(r"/p/[A-Za-z0-9_-]+/?", parsed.path))
+        return (host == "linkedin.com" or host.endswith(".linkedin.com")) and bool(_POST_PERMALINK_RE.search(parsed.path))
+    except ValueError:
+        return False
 
 
 def permalink_from_activity_id(activity_id: str, kind: str = "activity") -> str:
@@ -282,6 +292,11 @@ def canonicalize_post_url(
     """
     detail = detail_payload or {}
     list_p = list_payload or {}
+    copied = _strip_url(detail.get("post_url") or "")
+    if detail.get("post_url_source") == "copied" and is_post_permalink(copied):
+        return copied
+    if detail.get("post_url_source") == "unresolved":
+        return ""
     posts_urls: list[str] = []
     feed_urls: list[str] = []
     for candidate in (
@@ -292,6 +307,8 @@ def canonicalize_post_url(
         url = _strip_url(candidate or "")
         if not is_post_permalink(url):
             continue
+        if urlsplit(url).hostname == "lnkd.in":
+            return url
         if re.search(r"/posts/", url, re.I):
             posts_urls.append(url if url.endswith("/") else f"{url}/")
         else:
@@ -302,6 +319,8 @@ def canonicalize_post_url(
         return feed_urls[0]
 
     urn = (list_p.get("urn") or detail.get("urn") or "").strip()
+    if re.search(r"(?:ugcPost|share):", urn, re.I):
+        return ""  # These entity IDs alone do not establish the source permalink.
     m = _ACTIVITY_ID_RE.search(urn) or _ACTIVITY_ID_RE.search(linkedin_job_id or "")
     if m:
         blob = f"{urn} {linkedin_job_id}"

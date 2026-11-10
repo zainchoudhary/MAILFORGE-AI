@@ -39,9 +39,9 @@ describe('campaign and attachment routes', () => {
 
 describe('LinkedIn search route', () => {
   it('shows capture instructions when there are no runs', async () => {
-    const { default: LinkedInFinder } = await import('./LinkedInFinder');
-    renderRoute(<LinkedInFinder />);
-    expect(await screen.findByText('Capture your first LinkedIn Jobs search')).toBeInTheDocument();
-    expect(await screen.findByText('No captures yet.')).toBeInTheDocument();
+    const { default: LinkedInSearchList } = await import('./LinkedInSearchList');
+    renderRoute(<LinkedInSearchList />);
+    expect(await screen.findByText('No LinkedIn captures yet')).toBeInTheDocument();
+    expect(await screen.findByText('Use the Chrome extension to Collect emails from LinkedIn posts. Runs show up here when they sync.')).toBeInTheDocument();
   });
 });

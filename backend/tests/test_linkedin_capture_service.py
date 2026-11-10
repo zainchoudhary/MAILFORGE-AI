@@ -47,6 +47,43 @@ def test_upsert_extract_and_idempotent(user, db):
     assert service.request_fetch_details(db, user, run.id, None)["linkedin_job_ids"] == ["1"]
 
 
+def test_repeated_email_keeps_body_and_permalink_from_same_post(user, db):
+    run = service.create_run(db, user)
+    first_url = "https://www.linkedin.com/posts/first-activity-8111111111111111111-abcd/"
+    second_url = "https://www.linkedin.com/posts/second-activity-8222222222222222222-abcd/"
+    for jid, url, body in (
+        ("p8111111111111111111", first_url, "Hiring: jane.doe@acme-corp.com"),
+        ("p8222222222222222222", second_url, "Another role with much more detail. Apply to jane.doe@acme-corp.com for this new role."),
+    ):
+        service.upsert_jobs_batch(db, user, run.id, [_job(
+            jid, job_url=url, list_payload={"kind": "post", "author": "Jane Doe"},
+            detail_payload={"kind": "post", "author": "Jane Doe", "description": body, "post_url": url},
+        )])
+    candidate = db.scalars(select(LinkedInLeadCandidate)).one()
+    job = db.get(LinkedInJobRaw, candidate.job_raw_id)
+    assert candidate.signals["post_body"] == job.detail_payload["description"]
+    assert candidate.source_url == candidate.signals["post_url"] == job.job_url
+
+
+def test_recollect_replaces_wrong_share_url_with_copied_short_link(user, db):
+    run = service.create_run(db, user)
+    copied_url = "https://lnkd.in/p/dZa85pXX"
+    for url, source in (
+        ("https://www.linkedin.com/feed/update/urn:li:share:7524577087303880704/", ""),
+        (copied_url, "copied"),
+    ):
+        service.upsert_jobs_batch(db, user, run.id, [_job(
+            "p7524577087303880704", job_url=url,
+            list_payload={"kind": "post", "urn": "urn:li:share:7524577087303880704"},
+            detail_payload={"kind": "post", "description": "Apply to bozhidar@techwork.bg",
+                            "post_url": url, "post_url_source": source},
+        )])
+    candidate = db.scalars(select(LinkedInLeadCandidate)).one()
+    assert candidate.email == "bozhidar@techwork.bg"
+    assert candidate.source_url == candidate.signals["post_url"] == copied_url
+    assert db.get(LinkedInJobRaw, candidate.job_raw_id).job_url == copied_url
+
+
 def test_hard_ceiling_422(user, db, monkeypatch):
     monkeypatch.setattr(get_settings(), "linkedin_capture_hard_ceiling", 2)
     run = service.create_run(db, user)

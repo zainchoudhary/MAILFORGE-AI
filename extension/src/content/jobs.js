@@ -231,6 +231,19 @@
     return items;
   }
 
+  async function attachCopiedPostLinks(items, posts) {
+    return posts.resolveCopiedPostLinks(items, async (card, email) => {
+      const token = crypto.randomUUID();
+      card.setAttribute('data-outreach-copy-token', token);
+      try {
+        const response = await chrome.runtime.sendMessage({ type: 'COPY_POST_LINK', token, email });
+        return response?.ok ? response.url : '';
+      } finally {
+        if (card.getAttribute('data-outreach-copy-token') === token) card.removeAttribute('data-outreach-copy-token');
+      }
+    }, () => stopRequested);
+  }
+
   function isSearchDomReady() {
     const loaders = document.querySelectorAll(
       '.artdeco-loader, [aria-label="Loading"], .search-results__loader, .search-results__loader-state'
@@ -302,6 +315,7 @@
             ? scrollOrNextPage(selectors, capture.sleep)
             : scrollFeed(capture.sleep, posts),
         onBatch: async (items) => {
+          if (!onJobs) await attachCopiedPostLinks(items, posts);
           // On Jobs pages, enrich a few cards with detail text so emails can be extracted.
           if (onJobs) {
             for (const item of items.slice(0, 3)) {
@@ -405,10 +419,11 @@
     }
     if (msg.type === "CAPTURE_VISIBLE" || msg.type === "CAPTURE_PAGE") {
       loadAll()
-        .then(({ parse, posts, searchCollect }) => {
+        .then(async ({ parse, posts, searchCollect }) => {
           const onJobs = /\/jobs\//.test(location.pathname);
           const onSearch = /\/search\/results\/content/i.test(location.pathname);
           const items = parsePage(parse, posts, searchCollect);
+          if (!onJobs) await attachCopiedPostLinks(items, posts);
           sendResponse({
             ok: true,
             jobs: items,

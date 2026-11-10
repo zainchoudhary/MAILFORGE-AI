@@ -1,6 +1,28 @@
 from app.linkedin_capture.extract import canonicalize_post_url, extract_from_job, job_text_for_extract
 
 
+def test_copied_short_post_link_wins_over_wrong_share_url():
+    assert canonicalize_post_url(
+        job_url="https://www.linkedin.com/feed/update/urn:li:share:7524577087303880704/",
+        detail_payload={"post_url": "https://lnkd.in/p/dZa85pXX", "post_url_source": "copied"},
+    ) == "https://lnkd.in/p/dZa85pXX"
+
+
+def test_unresolved_post_does_not_reconstruct_a_link_from_share_id():
+    assert canonicalize_post_url(
+        linkedin_job_id="p7524577087303880704",
+        list_payload={"urn": "urn:li:share:7524577087303880704", "kind": "post"},
+        detail_payload={"post_url_source": "unresolved"},
+    ) == ""
+
+
+def test_bare_share_urn_is_not_an_openable_post_link():
+    assert canonicalize_post_url(
+        linkedin_job_id="p7524577087303880704",
+        list_payload={"urn": "urn:li:share:7524577087303880704"},
+    ) == ""
+
+
 def test_extracts_email_from_detail_description():
     drafts = extract_from_job(
         title="Backend Engineer",

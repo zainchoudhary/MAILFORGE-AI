@@ -107,3 +107,16 @@ export const deleteRuns = async (runIds) =>
   (await api.post(`${BASE}/runs/bulk-delete`, { run_ids: runIds })).data;
 export const saveGroup = async (runId, group_name, candidate_ids) =>
   (await api.post(`${BASE}/runs/${runId}/save-group`, { group_name, ...(candidate_ids ? { candidate_ids } : {}) })).data;
+/** Only open actual LinkedIn post URLs, including links returned by Copy link to post. */
+export function candidatePostUrl(candidate) {
+  for (const value of [candidate?.source_url, candidate?.signals?.post_url]) {
+    try {
+      const url = new URL(String(value || '').trim());
+      if (!/^https?:$/.test(url.protocol)) continue;
+      if (url.hostname === 'lnkd.in' && /^\/p\/[A-Za-z0-9_-]+\/?$/.test(url.pathname)) return url.href;
+      if (/(^|\.)linkedin\.com$/i.test(url.hostname) &&
+          /^\/(posts\/[^/]+|feed\/update\/urn:li:(activity|ugcPost|share):\d+)\/?$/.test(decodeURIComponent(url.pathname))) return url.href;
+    } catch { /* Try the alternate source URL. */ }
+  }
+  return '';
+}

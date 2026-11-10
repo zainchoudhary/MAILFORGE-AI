@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { api } from './api';
 import { INSTALL_STEPS, PAGE_LIMIT, isTruncated, showingLabel, canCancelRun, detailCounts, hasPendingDetails, isRunLive, setCandidatesSelected, progressLine, runTitle, saveResultSummary } from './linkedinCapture';
+import { candidatePostUrl } from './linkedinCapture';
+
+it('opens copied LinkedIn short post URLs and rejects lookalike hosts', () => {
+  expect(candidatePostUrl({ source_url: 'https://lnkd.in/p/dZa85pXX' })).toBe('https://lnkd.in/p/dZa85pXX');
+  expect(candidatePostUrl({ source_url: 'https://notlinkedin.com/posts/fake' })).toBe('');
+  expect(candidatePostUrl({ source_url: '', signals: { post_url: 'https://lnkd.in/p/dZa85pXX' } })).toBe('https://lnkd.in/p/dZa85pXX');
+});
 
 describe('linkedinCapture helpers', () => {
   it('detects live and cancellable runs', () => {

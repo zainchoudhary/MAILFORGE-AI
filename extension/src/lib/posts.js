@@ -2,6 +2,8 @@
 import { JOB_ID_FROM_URL } from "./selectors.js";
 
 const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
+const postCards = new WeakMap();
+const copiedLinks = new WeakMap();
 
 // Full post wrappers only — NEVER `.update-components-actor` (that's just the name row;
 // emails live in sibling commentary, so actor-only matches produced email-less "posts"
@@ -234,9 +236,9 @@ function urnId(card) {
 /** Build a permalink that opens the exact post (not the search page). */
 export function urlFromActivityUrn(urn) {
   if (!urn) return "";
-  const full = /urn:li:(activity|ugcPost|share):(\d{6,})/.exec(urn);
+  const full = /urn:li:(activity):(\d{6,})/.exec(urn);
   if (full) return `https://www.linkedin.com/feed/update/urn:li:${full[1]}:${full[2]}/`;
-  const short = /(activity|ugcPost|share):(\d{6,})/.exec(urn);
+  const short = /(activity):(\d{6,})/.exec(urn);
   if (short) return `https://www.linkedin.com/feed/update/urn:li:${short[1]}:${short[2]}/`;
   return "";
 }
@@ -248,7 +250,13 @@ export function isSearchOrListUrl(url) {
 
 export function isPostPermalink(url) {
   if (!url || isSearchOrListUrl(url)) return false;
-  return /\/feed\/update\/urn:li:(activity|ugcPost|share):\d+/i.test(url) || /\/posts\/[^/?#]+/i.test(url);
+  try {
+    const u = new URL(url, 'https://www.linkedin.com');
+    if (!/^https?:$/.test(u.protocol)) return false;
+    if (u.hostname === 'lnkd.in') return /^\/p\/[A-Za-z0-9_-]+\/?$/.test(u.pathname);
+    return /(^|\.)linkedin\.com$/i.test(u.hostname) &&
+      (/^\/feed\/update\/urn:li:(activity|ugcPost|share):\d+\/?$/i.test(decodeURIComponent(u.pathname)) || /^\/posts\/[^/]+\/?$/.test(u.pathname));
+  } catch { return false; }
 }
 
 function activityIdFromHref(href) {
@@ -263,9 +271,10 @@ function activityIdFromHref(href) {
 function cleanPostUrl(href, base) {
   try {
     const u = new URL(href, base || "https://www.linkedin.com");
-    if (!/linkedin\.com$/i.test(u.hostname) && !/\.linkedin\.com$/i.test(u.hostname)) return "";
+    if (u.hostname === 'lnkd.in' && isPostPermalink(u.href)) return `${u.origin}${u.pathname}`;
+    if (!/(^|\.)linkedin\.com$/i.test(u.hostname) || !/^https?:$/.test(u.protocol)) return "";
     if (isSearchOrListUrl(u.href) || /\/jobs\/view\//i.test(u.pathname)) return "";
-    let path = u.pathname || "/";
+    let path = decodeURIComponent(u.pathname || "/");
     if (!path.endsWith("/")) path += "/";
     return `${u.origin}${path}`;
   } catch {
@@ -283,10 +292,12 @@ function collectPostHrefs(card) {
     ...card.querySelectorAll("a[href]"),
   ];
   for (const a of nodes) {
+    // Links quoted in commentary or comments point elsewhere, not to this post.
+    if (a.closest(`${POST_TEXT}, .comments-comment-item, .comments-comment-entity`)) continue;
     const href = (a.getAttribute("href") || "").trim();
     if (!href || href.startsWith("#") || seen.has(href)) continue;
     if (
-      !/\/posts\/|\/feed\/update\/|activity-|urn:li:(?:activity|ugcPost|share)/i.test(href)
+      !/\/posts\/|\/feed\/update\/|lnkd\.in\/p\/|activity-|urn:li:(?:activity|ugcPost|share)/i.test(href)
     ) {
       continue;
     }
@@ -309,7 +320,16 @@ export function hasPostPermalinkSignal(el) {
  */
 export function postUrlFromNode(card, base = "https://www.linkedin.com") {
   if (!card) return "";
-  const hrefs = collectPostHrefs(card);
+  const urn = cardUrn(card);
+  const activity = /urn:li:activity:(\d{6,})/.exec(urn)?.[1];
+  const hrefs = collectPostHrefs(card).filter((href) => {
+    const cleaned = cleanPostUrl(href, base);
+    // A post can mention other posts. Only use links matching its own activity.
+    return cleaned && (!activity || /lnkd\.in\/p\//.test(cleaned) || activityIdFromHref(cleaned) === activity);
+  });
+
+  const shortLink = hrefs.map((href) => cleanPostUrl(href, base)).find((url) => /^https:\/\/lnkd\.in\/p\//.test(url));
+  if (shortLink) return shortLink;
 
   for (const href of hrefs) {
     const cleaned = cleanPostUrl(href, base);
@@ -324,13 +344,6 @@ export function postUrlFromNode(card, base = "https://www.linkedin.com") {
   const fromUrn = urlFromActivityUrn(cardUrn(card));
   if (fromUrn) return fromUrn;
 
-  for (const href of hrefs) {
-    const activityId = activityIdFromHref(href);
-    if (!activityId) continue;
-    const kind = /ugcPost/i.test(href) ? "ugcPost" : /share[:\-]/i.test(href) ? "share" : "activity";
-    return `https://www.linkedin.com/feed/update/urn:li:${kind}:${activityId}/`;
-  }
-
   return "";
 }
 
@@ -341,6 +354,7 @@ export function postUrlFromNode(card, base = "https://www.linkedin.com") {
 export function resolvePostPermalink(card, base = "https://www.linkedin.com") {
   let node = card;
   for (let i = 0; node && i < 10; i++) {
+    if (isMultiPostContainer(node) || crossesPostBoundary(node, card)) break;
     const url = postUrlFromNode(node, base);
     if (url) return url;
     node = node.parentElement;
@@ -492,8 +506,17 @@ export function postBody(card, { email = "" } = {}) {
 }
 
 /** True when another matched card wraps this one — skip the inner commentary-only node. */
+function isMultiPostContainer(card) {
+  const children = [...card.querySelectorAll(POST_CARD)].filter((node) =>
+    !node.matches('.feed-shared-update-v2__control-menu-container, .update-components-mini-update-v2')
+  );
+  return children.filter((node) => !children.some((other) => other !== node && other.contains(node))).length > 1;
+}
+
 function isNestedCard(card, allCards) {
-  return allCards.some((other) => other !== card && other.contains(card));
+  return isMultiPostContainer(card) || allCards.some((other) =>
+    other !== card && other.contains(card) && !isMultiPostContainer(other)
+  );
 }
 
 /** Best poster name from DOM + profile link (handles truncated "Ehsan" vs "Halima Ehsan"). */
@@ -523,7 +546,7 @@ function bestAuthorFromCard(card) {
 
 /** Turn one LinkedIn post card into the upload shape (author, designation, time, full body). */
 export function cardToPost(card, base = "https://www.linkedin.com", { pageHref = "", email = "" } = {}) {
-  if (!card) return null;
+  if (!card || isMultiPostContainer(card)) return null;
   expandSeeMore(card);
   // Raw segment still carries "Name • 2nd … Nh" for header metadata; stored body is chrome-free.
   const rawSegment = rawPostSegment(card, { email });
@@ -569,7 +592,7 @@ export function cardToPost(card, base = "https://www.linkedin.com", { pageHref =
       (typeof location !== "undefined" ? location.href : "") ||
       base);
   const onSearch = /\/search\/results\/content/i.test(href);
-  return {
+  const post = {
     linkedin_job_id: id,
     title: author || "LinkedIn post",
     // Company = employer only (from "at X" / "@ X"). Headline stays in subtitle → designation.
@@ -594,9 +617,35 @@ export function cardToPost(card, base = "https://www.linkedin.com", { pageHref =
       posted_at,
       posted_at_text,
       post_url: url || "",
+      post_url_source: url ? (collectPostHrefs(card).length ? 'dom' : 'activity_urn') : 'unresolved',
     },
     detail_status: "fetched",
   };
+  postCards.set(post, card);
+  return post;
+}
+
+/** Resolve only on the DOM card that produced this exact item; never look up by email alone. */
+export async function resolveCopiedPostLinks(items, copyLink, shouldStop = () => false) {
+  for (const item of items) {
+    if (shouldStop()) break;
+    const card = postCards.get(item);
+    const email = item.detail_payload?.description?.match(EMAIL_RE)?.[0];
+    if (!card || !email) continue;
+    const signature = `${cardUrn(card)}|${email}`;
+    const cached = copiedLinks.get(card);
+    let url = cached?.signature === signature ? cached.url : '';
+    if (!url) {
+      try { url = await copyLink(card, email); } catch { url = ''; }
+    }
+    if (!isPostPermalink(url) || signature !== `${cardUrn(card)}|${email}` ||
+        !(card.textContent || '').toLowerCase().includes(email.toLowerCase())) continue;
+    copiedLinks.set(card, { signature, url });
+    item.job_url = url;
+    item.detail_payload.post_url = url;
+    item.detail_payload.post_url_source = 'copied';
+  }
+  return items;
 }
 
 function isPostContainer(el) {
@@ -612,6 +661,18 @@ function isPostContainer(el) {
   return POST_CONTAINER_HINT.test(cls);
 }
 
+// Stop before searching a shared results wrapper: its links can belong to peers.
+function crossesPostBoundary(ancestor, origin) {
+  if (ancestor === origin) return false;
+  for (const post of ancestor.querySelectorAll(POST_CARD)) {
+    if (!post.contains(origin)) continue;
+    for (const other of ancestor.querySelectorAll(POST_CARD)) {
+      if (!other.contains(post) && !post.contains(other)) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Climb from a node to the nearest full post container.
  * Prefer containers that already expose a post URN or permalink — email text often
@@ -619,10 +680,12 @@ function isPostContainer(el) {
  */
 export function closestPostContainer(node) {
   let cur = node?.nodeType === 3 ? node.parentElement : node;
+  const origin = cur;
   let withPermalink = null;
   let containerFallback = null;
   let softFallback = null;
   for (let i = 0; cur && i < 25; i++) {
+    if (isMultiPostContainer(cur) || crossesPostBoundary(cur, origin)) break;
     const hasLink = hasPostPermalinkSignal(cur);
     if (isPostContainer(cur)) {
       if (hasLink) return cur;
@@ -724,7 +787,7 @@ export function parseVisiblePosts(root, base = "https://www.linkedin.com") {
     (typeof location !== "undefined" ? location.href : "") ||
     base;
   for (const card of cards) {
-    // Prefer innermost cards so a search wrapper does not swallow many posts.
+    // Keep full single-post cards, but never shared multi-post search wrappers.
     if (isNestedCard(card, cards)) continue;
     const post = cardToPost(card, base, { pageHref });
     if (!post || seen.has(post.linkedin_job_id)) continue;

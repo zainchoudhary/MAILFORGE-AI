@@ -555,36 +555,23 @@ def _upsert_candidate(db: Session, run: LinkedInCaptureRun, job: LinkedInJobRaw,
         (not (existing.name or "").strip() and bool(str(values.get("name") or "").strip()))
         or (not (existing.position or "").strip() and bool(str(values.get("position") or "").strip()))
     )
-    if draft.score > existing.score or richer_body or richer_identity:
+    # Choose one source as a unit. Mixing a newer body/job with an older URL
+    # makes Go to post open a different post from the one displayed.
+    same_job = existing.job_raw_id == job.id
+    gains_url = not (existing.source_url or "").strip() and bool(values.get("source_url"))
+    if same_job or draft.score > existing.score or richer_body or richer_identity or gains_url:
         for field, value in values.items():
             if field in user_edited:
                 continue
-            if draft.score > existing.score:
-                setattr(existing, field, value)
-            elif value not in (None, "") and not (getattr(existing, field) or ""):
-                setattr(existing, field, value)
+            setattr(existing, field, value)
         if draft.score > existing.score:
             existing.score = draft.score
         existing.job_raw_id = job.id
-        merged_signals = {**(existing.signals or {}), **signals}
+        merged_signals = dict(signals)
+        merged_signals["post_url"] = values.get("source_url") or ""
         if user_edited:
             merged_signals["user_edited"] = user_edited
         existing.signals = merged_signals
-    # Fill missing permalinks, and upgrade weak feed/update URNs to /posts/ slugs.
-    new_url = (values.get("source_url") or "").strip()
-    old_url = (existing.source_url or "").strip()
-    better_url = bool(new_url) and (
-        not old_url
-        or ("/posts/" in new_url.lower() and "/posts/" not in old_url.lower())
-    )
-    if better_url:
-        existing.source_url = new_url
-        existing.job_raw_id = job.id
-        merged = {**(existing.signals or {}), **signals}
-        merged["post_url"] = new_url
-        if user_edited:
-            merged["user_edited"] = user_edited
-        existing.signals = merged
     db.flush()
     return "updated"
 

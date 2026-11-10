@@ -21,9 +21,13 @@ import {
   closestPostContainer,
   isolatePostSegment,
   postBody,
+  urlFromActivityUrn,
+  isPostPermalink,
 } from "../src/lib/posts.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+assert.equal(urlFromActivityUrn('urn:li:share:7524577087303880704'), '', 'share IDs are not verified post URLs');
+assert.equal(isPostPermalink('https://lnkd.in/p/dZa85pXX'), true);
 const html = readFileSync(join(here, "../fixtures/jobs-list.html"), "utf8");
 const { document } = parseHTML(html);
 
@@ -164,6 +168,51 @@ assert.equal(
 );
 assert.equal(nestedPost.detail_payload.post_url, nestedPost.job_url);
 assert.match(nestedPost.detail_payload.description, /hr@databiqs\.com/i);
+
+// A missing permalink must never borrow the next search result's post link.
+const { document: siblingsDoc } = parseHTML(`
+  <main>
+    <article class="feed-shared-update-v2" id="email-post">
+      <span id="email-text">Apply: hiring@example.com</span>
+    </article>
+    <article class="feed-shared-update-v2" data-urn="urn:li:activity:9999999999999999999">
+      <a href="/posts/another-activity-9999999999999999999-abcd/">Other post</a>
+    </article>
+  </main>`);
+const ownCard = siblingsDoc.querySelector('#email-post');
+const ownEmail = siblingsDoc.querySelector('#email-text');
+assert.equal(resolvePostPermalink(ownEmail), '', 'do not borrow a sibling permalink');
+assert.equal(resolvePostPermalink(ownCard), '', 'card lookup must not borrow a sibling permalink');
+assert.equal(closestPostContainer(ownEmail), ownCard, 'keep email attached to its own card');
+
+// Search wrappers can match POST_CARD while containing several independent posts.
+const { document: groupedDoc } = parseHTML(`<div class="reusable-search__result-container">
+  <div class="feed-shared-update-v2" data-urn="urn:li:activity:8111111111111111111">
+    <div class="update-components-text">First role: first@example.com</div>
+  </div>
+  <div class="feed-shared-update-v2" data-urn="urn:li:activity:8222222222222222222">
+    <div class="update-components-text">Second role with a longer description: second@example.com</div>
+  </div>
+</div>`);
+const groupedPosts = parseVisiblePosts(groupedDoc);
+assert.equal(groupedPosts.length, 2, 'shared wrapper must not collapse independent posts');
+for (const [email, id] of [['first@example.com', '8111111111111111111'], ['second@example.com', '8222222222222222222']]) {
+  const bound = cardToPost(findCardForEmail(groupedDoc, email), undefined, { email });
+  assert.equal(bound.job_url, `https://www.linkedin.com/feed/update/urn:li:activity:${id}/`);
+  assert.ok(bound.detail_payload.description.includes(email));
+}
+
+// A URL mentioned in the body is not the source post's permalink.
+const { document: linkedDoc } = parseHTML(`<div class="feed-shared-update-v2" data-urn="urn:li:activity:8111111111111111111">
+  <div class="update-components-text">Apply first@example.com <a href="/posts/other-activity-8222222222222222222-abcd">Related post</a></div>
+  <a class="update-components-actor__sub-description-link" href="/feed/update/urn%3Ali%3Aactivity%3A8111111111111111111/">2h</a>
+</div>`);
+assert.equal(resolvePostPermalink(linkedDoc.querySelector('div')),
+  'https://www.linkedin.com/feed/update/urn:li:activity:8111111111111111111/');
+linkedDoc.querySelector('div').removeAttribute('data-urn');
+assert.equal(resolvePostPermalink(linkedDoc.querySelector('div')),
+  'https://www.linkedin.com/feed/update/urn:li:activity:8111111111111111111/',
+  'encoded timestamp link identifies the source even when the card has no URN');
 
 // Multi-post mashup: body must stay on the email's own post, not siblings.
 const mashed =

@@ -19,6 +19,7 @@ import {
   saveResultSummary,
   setCandidatesSelected,
   showingLabel,
+  candidatePostUrl as postUrl,
 } from '../services/linkedinCapture';
 import { BusyButton, Empty, Field, PageHeader, QueryState, Status } from '../components/Common';
 import { Button } from '../components/ui/button';
@@ -39,17 +40,6 @@ function postedLabel(candidate) {
 function postBody(candidate) {
   const signals = candidate?.signals || {};
   return signals.post_body || candidate?.snippet || '';
-}
-
-/** Permalink for the LinkedIn post this lead came from (never the search-results page). */
-function postUrl(candidate) {
-  const signals = candidate?.signals || {};
-  const raw = String(candidate?.source_url || signals.post_url || '').trim();
-  if (!raw) return '';
-  // Hide search-result / junk links so "Go to post" never opens a dead page by mistake.
-  if (/\/search\/results\//i.test(raw) || /\/jobs\/search/i.test(raw)) return '';
-  if (!/linkedin\.com\/(?:posts\/|feed\/update\/)/i.test(raw)) return '';
-  return raw;
 }
 
 function CandidateRow({ runId, candidate, onChanged, onSelect }) {
